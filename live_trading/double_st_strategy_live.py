@@ -377,9 +377,81 @@ class DoubleSuperTrendStrategy:
         """일별 로거 반환"""
         return self.log_handler.get_logger()
 
+    async def save_historical_data_to_csv(self):
+        """
+        과거 데이터 전체를 CSV에 저장 (초기 로드 후 1회 실행)
+        prepare_backtest_data.py와 동일한 컬럼 순서
+        """
+        try:
+            # CSV 파일이 이미 있으면 삭제 (새로 시작)
+            if os.path.isfile(LIVE_INDICATOR_CSV):
+                os.remove(LIVE_INDICATOR_CSV)
+
+            all_rows = []
+
+            # 5분봉 데이터 전체 순회
+            for idx, row_5m in self.candle_5m.df.iterrows():
+                # 1시간봉 데이터 (1시간 shift 적용)
+                target_1h_timestamp = row_5m['timestamp'] + pd.Timedelta(hours=1)
+
+                # 1시간봉에서 해당 timestamp 찾기
+                matching_1h = self.candle_1h.df[self.candle_1h.df['timestamp'] == target_1h_timestamp]
+
+                if len(matching_1h) > 0:
+                    row_1h = matching_1h.iloc[0]
+                else:
+                    # 매칭되는 1시간봉이 없으면 가장 가까운 것 사용 (forward fill)
+                    # 1시간봉 timestamp가 5분봉보다 이전인 것 중 가장 최근 것
+                    earlier_1h = self.candle_1h.df[self.candle_1h.df['timestamp'] <= row_5m['timestamp']]
+                    if len(earlier_1h) > 0:
+                        row_1h = earlier_1h.iloc[-1]
+                    else:
+                        continue  # 1시간봉 데이터 없으면 스킵
+
+                # prepare_backtest_data.py와 동일한 컬럼 순서
+                row_data = {
+                    # 기본 정보
+                    'timestamp': row_5m['timestamp'],
+
+                    # 5분봉 OHLCV
+                    'Open': row_5m['Open'],
+                    'High': row_5m['High'],
+                    'Low': row_5m['Low'],
+                    'Close': row_5m['Close'],
+                    'Volume': row_5m['Volume'],
+
+                    # 5분봉 SuperTrend
+                    'st_12_1_5m': row_5m.get('st_12_1_5m', 0),
+                    'st_12_1_5m_dir': row_5m.get('st_12_1_5m_dir', 0),
+                    'st_12_3_5m': row_5m.get('st_12_3_5m', 0),
+                    'st_12_3_5m_dir': row_5m.get('st_12_3_5m_dir', 0),
+
+                    # 1시간봉 OHLC
+                    'Open_1h': row_1h['Open'],
+                    'High_1h': row_1h['High'],
+                    'Low_1h': row_1h['Low'],
+                    'Close_1h': row_1h['Close'],
+
+                    # 1시간봉 SuperTrend
+                    'st_12_1_1h': row_1h.get('st_12_1_1h', 0),
+                    'st_12_1_1h_dir': row_1h.get('st_12_1_1h_dir', 0),
+                    'st_12_3_1h': row_1h.get('st_12_3_1h', 0),
+                    'st_12_3_1h_dir': row_1h.get('st_12_3_1h_dir', 0)
+                }
+
+                all_rows.append(row_data)
+
+            # DataFrame으로 변환 후 저장
+            df_all = pd.DataFrame(all_rows)
+            df_all.to_csv(LIVE_INDICATOR_CSV, index=False)
+
+        except Exception as e:
+            logger = self.get_logger()
+            logger.error(f"과거 데이터 CSV 저장 실패: {e}")
+
     def save_indicators_to_csv(self):
         """
-        현재 5분봉 + 1시간봉 지표를 CSV에 저장
+        현재 5분봉 + 1시간봉 지표를 CSV에 append
         prepare_backtest_data.py와 동일한 컬럼 순서
         """
         if len(self.candle_5m.df) == 0:
@@ -436,15 +508,12 @@ class DoubleSuperTrendStrategy:
                 'st_12_3_1h_dir': latest_1h.get('st_12_3_1h_dir', 0)
             }
 
-            # CSV 파일이 존재하는지 확인
-            file_exists = os.path.isfile(LIVE_INDICATOR_CSV)
-
             # CSV에 append
             df_row = pd.DataFrame([row_data])
             df_row.to_csv(
                 LIVE_INDICATOR_CSV,
                 mode='a',
-                header=not file_exists,
+                header=False,  # append 모드에서는 헤더 없이
                 index=False
             )
 
@@ -503,6 +572,11 @@ class DoubleSuperTrendStrategy:
             self.candle_1h.df = pd.DataFrame(self.candle_1h.candles)
             self.candle_1h.calculate_indicators('_1h')
             logger.info(f"✅ 1시간봉 로드 완료: {len(self.candle_1h.df)}개 (마지막 미완성 봉 제외)")
+
+            # 과거 데이터 전체를 CSV에 저장
+            logger.info("📝 과거 데이터 CSV 저장 시작...")
+            await self.save_historical_data_to_csv()
+            logger.info(f"✅ 과거 데이터 CSV 저장 완료: {len(self.candle_5m.df)}개 행")
 
         except Exception as e:
             logger.error(f"❌ 과거 데이터 로드 실패: {e}")
