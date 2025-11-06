@@ -28,8 +28,8 @@ START_DATE = '2020-03-01'  # 백테스트 시작 날짜
 END_DATE = '2025-11-05'    # 백테스트 종료 날짜
 
 # 백테스터 파라미터
-INITIAL_CAPITAL = 1000      # 초기 자본 (USDT)
-RISK_PER_TRADE = 0.01       # 거래당 리스크 (3%)
+INITIAL_CAPITAL = 400      # 초기 자본 (USDT)
+RISK_PER_TRADE = 0.03       # 거래당 리스크 (3%)
 FEE_RATE = 0.000275         # 수수료율 (0.0275%)
 
 # 출력 파일 설정
