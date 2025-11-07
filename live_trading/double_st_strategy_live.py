@@ -577,16 +577,15 @@ class DoubleSuperTrendStrategy:
             self.candle_5m.calculate_indicators('_5m')
             logger.info(f"✅ 5분봉 로드 완료: {len(self.candle_5m.df)}개 (마지막 미완성 봉 제외)")
 
-            # 1시간봉 데이터 로드 (202개 → 마지막 2개 제외 = 200개)
-            # 마지막 = 진행중 봉, 마지막-1 = 완성됐지만 5분봉과 매칭 안됨
+            # 1시간봉 데이터 로드 (201개 → 마지막 미완성 봉 제외 = 200개)
             klines_1h = self.client.futures_klines(
                 symbol=self.symbol,
                 interval='1h',
-                limit=202
+                limit=201
             )
 
-            # 마지막 2개 캔들 제외하고 저장
-            for kline in klines_1h[:-2]:  # 마지막 2개 제외
+            # 마지막 캔들(미완성) 제외하고 저장
+            for kline in klines_1h[:-1]:  # 마지막 제외
                 candle = {
                     'timestamp': datetime.fromtimestamp(kline[0] / 1000, tz=pytz.UTC),
                     'Open': float(kline[1]),
