@@ -13,8 +13,8 @@ class Config:
     """Configuration class for ML strategy"""
 
     # API Configuration
-    BINANCE_API_KEY = os.getenv('BINANCE_API_KEY', '')
-    BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
+    API_KEY = os.getenv('BINANCE_API_KEY', '')
+    API_SECRET = os.getenv('BINANCE_API_SECRET', '')
     USE_TESTNET = os.getenv('USE_TESTNET', 'False').lower() == 'true'
 
     # Trading Configuration
