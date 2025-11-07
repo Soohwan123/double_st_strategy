@@ -577,15 +577,15 @@ class DoubleSuperTrendStrategy:
             self.candle_5m.calculate_indicators('_5m')
             logger.info(f"✅ 5분봉 로드 완료: {len(self.candle_5m.df)}개 (마지막 미완성 봉 제외)")
 
-            # 1시간봉 데이터 로드 (201개 → 마지막 미완성 봉 제외 = 200개)
+            # 1시간봉 데이터 로드 (201개, 진행중 포함)
             klines_1h = self.client.futures_klines(
                 symbol=self.symbol,
                 interval='1h',
                 limit=201
             )
 
-            # 마지막 캔들(미완성) 제외하고 저장
-            for kline in klines_1h[:-1]:  # 마지막 제외
+            # 진행중 봉 포함 전체 저장 (5분 shift로 정확히 매칭)
+            for kline in klines_1h:  # 전체 포함
                 candle = {
                     'timestamp': datetime.fromtimestamp(kline[0] / 1000, tz=pytz.UTC),
                     'Open': float(kline[1]),
@@ -598,7 +598,7 @@ class DoubleSuperTrendStrategy:
 
             self.candle_1h.df = pd.DataFrame(self.candle_1h.candles)
             self.candle_1h.calculate_indicators('_1h')
-            logger.info(f"✅ 1시간봉 로드 완료: {len(self.candle_1h.df)}개 (마지막 미완성 봉 제외)")
+            logger.info(f"✅ 1시간봉 로드 완료: {len(self.candle_1h.df)}개 (진행중 포함)")
 
             # 과거 데이터 전체를 CSV에 저장
             logger.info("📝 과거 데이터 CSV 저장 시작...")
