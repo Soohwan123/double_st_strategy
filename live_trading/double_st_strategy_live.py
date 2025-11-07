@@ -252,7 +252,7 @@ class CandleData:
 
     def update_from_kline(self, kline):
         """
-        웹소켓 kline 데이터 업데이트
+        웹소켓 kline 데이터 업데이트 (증분 방식)
 
         초기 로드 후 첫 웹소켓 데이터:
           - 과거 데이터 마지막 봉과 timestamp 동일 → 교체 (업데이트)
@@ -270,32 +270,58 @@ class CandleData:
             'Volume': float(kline['v'])
         }
 
+        is_new_candle = False
+
         if self.first_update and self.candles:
             # 첫 업데이트: 마지막 캔들과 비교
             if self.candles[-1]['timestamp'] == candle['timestamp']:
                 # 같은 시간 = 과거 마지막 봉 업데이트
                 self.candles[-1] = candle
+                # DataFrame 마지막 행 업데이트
+                if len(self.df) > 0:
+                    for key, value in candle.items():
+                        self.df.at[self.df.index[-1], key] = value
             else:
                 # 다른 시간 = 새 봉 추가
                 self.candles.append(candle)
                 if len(self.candles) > self.max_candles:
                     self.candles.pop(0)
+                    # DataFrame도 첫 행 제거
+                    self.df = self.df.iloc[1:].reset_index(drop=True)
+
+                # DataFrame에 새 행 추가
+                new_row = pd.DataFrame([candle])
+                self.df = pd.concat([self.df, new_row], ignore_index=True)
+                is_new_candle = True
+
             self.first_update = False
         else:
             # 일반 업데이트
             if self.candles and self.candles[-1]['timestamp'] == candle['timestamp']:
                 # 같은 timestamp = 진행중 봉 업데이트
                 self.candles[-1] = candle
+
+                # DataFrame 마지막 행 업데이트 (지표 컬럼은 유지)
+                if len(self.df) > 0:
+                    for key in ['Open', 'High', 'Low', 'Close', 'Volume', 'timestamp']:
+                        if key in candle:
+                            self.df.at[self.df.index[-1], key] = candle[key]
             else:
                 # 새 봉 시작
                 self.candles.append(candle)
                 # 최대 캔들 수 제한 (FIFO)
                 if len(self.candles) > self.max_candles:
                     self.candles.pop(0)
+                    # DataFrame도 첫 행 제거
+                    self.df = self.df.iloc[1:].reset_index(drop=True)
 
-        # DataFrame 업데이트
-        if self.candles:
-            self.df = pd.DataFrame(self.candles)
+                # DataFrame에 새 행 추가
+                new_row = pd.DataFrame([candle])
+                self.df = pd.concat([self.df, new_row], ignore_index=True)
+                is_new_candle = True
+
+        # 새 캔들인 경우에만 전체 재계산 필요 여부 플래그
+        self.needs_full_recalc = is_new_candle
 
     def calculate_indicators(self, suffix=''):
         """SuperTrend 지표 계산"""
