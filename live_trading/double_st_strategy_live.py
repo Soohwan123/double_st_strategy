@@ -36,7 +36,7 @@ from config_ml import Config
 SYMBOL = 'BTCUSDC'
 
 # 리스크 관리
-RISK_PER_TRADE = 0.01          # 거래당 리스크 (1%)
+RISK_PER_TRADE = 0.03          # 거래당 리스크 (3%)
 MAX_LEVERAGE = 100              # 최대 레버리지
 MIN_STOP_DISTANCE = 0.0001      # 최소 손절 거리 (0.01%)
 
