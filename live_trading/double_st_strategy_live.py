@@ -379,10 +379,8 @@ class DoubleSuperTrendStrategy:
         self.after_stop_loss_long = False
         self.after_stop_loss_short = False
 
-        # 정각 시간 캔들 대기 플래그
-        self.pending_5m_candle = None
-        self.pending_1h_candle = None
-        self.waiting_for_hourly = False
+        # 타임프레임 동기화
+        self.last_candle_time = {'5m': None, '1h': None}
 
         # 설정 (상단 변수 사용)
         self.symbol = SYMBOL
@@ -602,6 +600,14 @@ class DoubleSuperTrendStrategy:
             self.candle_1h.calculate_indicators('_1h')
             logger.info(f"✅ 1시간봉 로드 완료: {len(self.candle_1h.df)}개 (진행중 봉 제외)")
 
+            # 초기 last_candle_time 설정
+            if len(self.candle_5m.df) > 0:
+                self.last_candle_time['5m'] = self.candle_5m.df.iloc[-1]['timestamp']
+            if len(self.candle_1h.df) > 0:
+                self.last_candle_time['1h'] = self.candle_1h.df.iloc[-1]['timestamp']
+
+            logger.info(f"✅ 초기 타임프레임 설정: 5m={self.last_candle_time['5m']}, 1h={self.last_candle_time['1h']}")
+
             # 과거 데이터 전체를 CSV에 저장
             logger.info("📝 과거 데이터 CSV 저장 시작...")
             await self.save_historical_data_to_csv()
@@ -649,6 +655,50 @@ class DoubleSuperTrendStrategy:
             self.sell_ready = True
             self.sell_set = False
             self.buy_set = True  # 이제 LONG 진입 준비
+
+    def check_timeframes_ready(self, current_5m_time) -> bool:
+        """
+        필요한 타임프레임이 모두 준비되었는지 확인
+
+        Args:
+            current_5m_time: 현재 5분봉 시간
+
+        Returns:
+            bool: 모든 필요한 타임프레임이 준비되었으면 True
+        """
+        from datetime import timedelta
+
+        minute = current_5m_time.minute
+
+        # 필요한 타임프레임과 예상 시간 매핑
+        required_timeframes = {}
+
+        # 1. 5분봉: 항상 필요 (현재 시간 - 5분)
+        expected_5m = current_5m_time - timedelta(minutes=5)
+        required_timeframes['5m'] = expected_5m
+
+        # 2. 1시간봉: 정각(00분)에만 필요 (현재 시간 - 1시간)
+        if minute == 0:
+            expected_1h = current_5m_time - timedelta(hours=1)
+            required_timeframes['1h'] = expected_1h
+
+        # 각 타임프레임 체크
+        logger = self.get_logger()
+        for tf, expected_time in required_timeframes.items():
+            if self.last_candle_time[tf] is None:
+                logger.warning(f"⚠️ {tf} 데이터 아직 수신 안됨 (필요: {expected_time})")
+                return False
+
+            # 수신한 시간이 예상 시간 이상인지 확인
+            if self.last_candle_time[tf] < expected_time:
+                logger.warning(
+                    f"⚠️ {tf} 데이터 부족: 수신={self.last_candle_time[tf]}, 필요={expected_time}"
+                )
+                return False
+
+        # 모두 준비됨
+        logger.info(f"✅ 모든 타임프레임 준비 완료: {list(required_timeframes.keys())}")
+        return True
 
     def check_1h_alignment(self):
         """1시간봉 SuperTrend 정렬 확인"""
@@ -1109,93 +1159,74 @@ class DoubleSuperTrendStrategy:
             logger = self.get_logger()
             logger.error(f"계좌 정보 업데이트 실패: {e}")
 
-    def is_hourly_time(self, timestamp):
-        """정각 시간인지 확인 (분이 0인지)"""
-        return timestamp.minute == 0
-
-    async def process_both_candles(self):
-        """5분봉 + 1시간봉 둘 다 도착 후 처리"""
-        logger = self.get_logger()
-
-        # 캔들 데이터 업데이트
-        self.candle_5m.update_from_kline(self.pending_5m_candle)
-        self.candle_1h.update_from_kline(self.pending_1h_candle)
-
-        # 지표 계산
-        self.candle_5m.calculate_indicators('_5m')
-        self.candle_1h.calculate_indicators('_1h')
-
-        logger.info("✅ 정각 시간: 5분봉 + 1시간봉 모두 처리 완료")
-
-        # 플래그 업데이트
-        self.update_5m_flags()
-
-        # 진입 신호 체크
-        await self.check_entry_signal()
-
-        # 청산 조건 체크
-        await self.check_exit_conditions()
-
-        # CSV 저장 (prepare_backtest_data.py와 동일한 형식)
-        self.save_indicators_to_csv()
-
-        # 대기 플래그 리셋
-        self.pending_5m_candle = None
-        self.pending_1h_candle = None
-        self.waiting_for_hourly = False
-
     async def on_5m_candle_close(self, kline):
         """5분봉 종료 시 처리"""
         logger = self.get_logger()
 
-        # 정각 시간인지 확인
+        # 5분봉 시간
         candle_time = datetime.fromtimestamp(kline['t'] / 1000, tz=pytz.UTC)
 
-        if self.is_hourly_time(candle_time):
-            # 정각 시간: 1시간봉 대기
-            self.pending_5m_candle = kline
-            self.waiting_for_hourly = True
-            logger.info(f"⏳ 정각 {candle_time.strftime('%H:%M')} - 1시간봉 대기 중...")
+        # last_candle_time 업데이트
+        self.last_candle_time['5m'] = candle_time
 
-            # 1시간봉이 이미 도착했으면 즉시 처리
-            if self.pending_1h_candle is not None:
-                await self.process_both_candles()
-        else:
-            # 일반 5분봉 처리
-            self.candle_5m.update_from_kline(kline)
-            self.candle_5m.calculate_indicators('_5m')
+        logger.info(
+            f"📊 5m | {candle_time.strftime('%H:%M')} | "
+            f"O:{float(kline['o']):.1f} H:{float(kline['h']):.1f} "
+            f"L:{float(kline['l']):.1f} C:{float(kline['c']):.1f}"
+        )
 
-            # 플래그 업데이트
-            self.update_5m_flags()
+        # 🔄 필요한 타임프레임이 모두 준비되었는지 확인
+        while True:
+            if self.check_timeframes_ready(candle_time):
+                break
+            else:
+                logger.info("⏳ 필요한 타임프레임 대기 중...")
+                await asyncio.sleep(0.2)
 
-            # 진입 신호 체크
-            await self.check_entry_signal()
+        # ✅ 모든 타임프레임 준비 완료 - 처리 시작
+        logger.info(f"🚀 모든 타임프레임 동기화 완료, 거래 로직 시작")
 
-            # 청산 조건 체크
-            await self.check_exit_conditions()
+        # 캔들 데이터 업데이트
+        self.candle_5m.update_from_kline(kline)
 
-            # CSV 저장
-            self.save_indicators_to_csv()
+        # 지표 계산
+        self.candle_5m.calculate_indicators('_5m')
+
+        # 플래그 업데이트
+        self.update_5m_flags()
+
+        # 청산 조건 체크
+        await self.check_exit_conditions()
+
+        # 진입 신호 체크
+        await self.check_entry_signal()
+
+        # CSV 저장
+        self.save_indicators_to_csv()
 
     async def on_1h_candle_close(self, kline):
         """1시간봉 종료 시 처리"""
         logger = self.get_logger()
 
-        if self.waiting_for_hourly:
-            # 5분봉이 대기 중
-            self.pending_1h_candle = kline
-            logger.info(f"⏳ 1시간봉 도착 - 5분봉과 함께 처리")
+        # 1시간봉 시간
+        candle_time = datetime.fromtimestamp(kline['t'] / 1000, tz=pytz.UTC)
 
-            # 5분봉이 이미 도착했으면 즉시 처리
-            if self.pending_5m_candle is not None:
-                await self.process_both_candles()
-        else:
-            # 일반 1시간봉 처리 (5분봉 대기 없음)
-            self.candle_1h.update_from_kline(kline)
-            self.candle_1h.calculate_indicators('_1h')
+        # last_candle_time 업데이트
+        self.last_candle_time['1h'] = candle_time
 
-            # 진입 신호 체크 (1시간봉 정렬이 바뀌었을 수 있음)
-            await self.check_entry_signal()
+        logger.info(
+            f"📊 1h | {candle_time.strftime('%H:%M')} | "
+            f"O:{float(kline['o']):.1f} H:{float(kline['h']):.1f} "
+            f"L:{float(kline['l']):.1f} C:{float(kline['c']):.1f}"
+        )
+
+        # 1시간봉 데이터 업데이트
+        self.candle_1h.update_from_kline(kline)
+
+        # 1시간봉 지표 계산
+        self.candle_1h.calculate_indicators('_1h')
+
+        logger.info("✅ 1시간봉 처리 완료")
 
 
 # ============================================================================
