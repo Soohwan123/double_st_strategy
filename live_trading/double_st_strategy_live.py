@@ -417,8 +417,9 @@ class DoubleSuperTrendStrategy:
 
             # 5분봉 데이터 전체 순회
             for idx, row_5m in self.candle_5m.df.iterrows():
-                # 1시간봉 데이터 (1시간 shift 적용)
-                target_1h_timestamp = row_5m['timestamp'] + pd.Timedelta(hours=1)
+                # 1시간봉 데이터 (5분 shift 적용)
+                # 5분봉 19:55 → 1시간봉 20:00 (55분 봉 마감 = 1시간봉 시작)
+                target_1h_timestamp = row_5m['timestamp'] + pd.Timedelta(minutes=5)
 
                 # 1시간봉에서 해당 timestamp 찾기
                 matching_1h = self.candle_1h.df[self.candle_1h.df['timestamp'] == target_1h_timestamp]
@@ -487,9 +488,9 @@ class DoubleSuperTrendStrategy:
             # 최신 5분봉 데이터
             latest_5m = self.candle_5m.df.iloc[-1]
 
-            # 1시간봉 데이터 (1시간 shift 적용)
-            # 5분봉 timestamp에서 1시간 뒤의 1시간봉 데이터를 찾음
-            target_1h_timestamp = latest_5m['timestamp'] + pd.Timedelta(hours=1)
+            # 1시간봉 데이터 (5분 shift 적용)
+            # 5분봉 19:55 → 1시간봉 20:00 (55분 봉 마감 = 1시간봉 시작)
+            target_1h_timestamp = latest_5m['timestamp'] + pd.Timedelta(minutes=5)
 
             # 1시간봉에서 해당 timestamp 찾기
             if len(self.candle_1h.df) > 0:
@@ -576,15 +577,16 @@ class DoubleSuperTrendStrategy:
             self.candle_5m.calculate_indicators('_5m')
             logger.info(f"✅ 5분봉 로드 완료: {len(self.candle_5m.df)}개 (마지막 미완성 봉 제외)")
 
-            # 1시간봉 데이터 로드 (201개 → 마지막 미완성 봉 제외 = 200개)
+            # 1시간봉 데이터 로드 (202개 → 마지막 2개 제외 = 200개)
+            # 마지막 = 진행중 봉, 마지막-1 = 완성됐지만 5분봉과 매칭 안됨
             klines_1h = self.client.futures_klines(
                 symbol=self.symbol,
                 interval='1h',
-                limit=201
+                limit=202
             )
 
-            # 마지막 캔들(미완성) 제외하고 저장
-            for kline in klines_1h[:-1]:  # 마지막 제외
+            # 마지막 2개 캔들 제외하고 저장
+            for kline in klines_1h[:-2]:  # 마지막 2개 제외
                 candle = {
                     'timestamp': datetime.fromtimestamp(kline[0] / 1000, tz=pytz.UTC),
                     'Open': float(kline[1]),
