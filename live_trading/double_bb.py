@@ -42,6 +42,7 @@ BB_SETTINGS = [
 os.makedirs(Config.LOGS_DIR, exist_ok=True)
 os.makedirs('trade_results', exist_ok=True)
 os.makedirs('live_data', exist_ok=True)
+os.makedirs('tick_data', exist_ok=True)
 
 
 class DailyLogHandler:
@@ -49,6 +50,7 @@ class DailyLogHandler:
         self.strategy_name = strategy_name
         self.current_date = None
         self.logger = None
+        self.tick_logger = None
         self.setup_logger()
 
     def setup_logger(self):
@@ -56,7 +58,9 @@ class DailyLogHandler:
         if today != self.current_date:
             self.current_date = today
             log_filename = f'{Config.LOGS_DIR}/{self.strategy_name}_{today}.log'
+            tick_log_filename = f'tick_data/tick_data_{today}.log'
 
+            # 기존 로거 설정
             if self.logger:
                 for handler in self.logger.handlers[:]:
                     handler.close()
@@ -79,9 +83,30 @@ class DailyLogHandler:
 
             self.logger.info(f"📅 새로운 날짜 로그 파일 시작: {today}")
 
+            # 틱데이터 전용 로거 설정
+            if self.tick_logger:
+                for handler in self.tick_logger.handlers[:]:
+                    handler.close()
+                    self.tick_logger.removeHandler(handler)
+
+            self.tick_logger = logging.getLogger(f'tick_data_{today}')
+            self.tick_logger.setLevel(logging.INFO)
+            self.tick_logger.handlers.clear()
+
+            tick_file_handler = logging.FileHandler(tick_log_filename)
+            tick_file_handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+            self.tick_logger.addHandler(tick_file_handler)
+
+            self.tick_logger.info(f"# Tick Data Log - {today}")
+            self.tick_logger.info(f"# Format: timestamp | price | quantity | trade_time | event_time")
+
     def get_logger(self):
         self.setup_logger()
         return self.logger
+
+    def get_tick_logger(self):
+        self.setup_logger()
+        return self.tick_logger
 
 
 # 전역 로그 핸들러 생성
@@ -920,11 +945,32 @@ class DoubleBBStrategy:
         틱데이터(aggTrade) 처리
         - 실시간 가격으로 BB 터치 감지하여 즉시 진입
         """
+        # 틱데이터 로깅 (매번)
+        tick_logger = self.log_handler.get_tick_logger()
+
+        # 틱 데이터 파싱
+        price = float(trade['p'])
+        quantity = float(trade['q'])
+        trade_time = datetime.fromtimestamp(trade['T'] / 1000, tz=pytz.UTC)
+        event_time = datetime.fromtimestamp(trade['E'] / 1000, tz=pytz.UTC)
+
+        # 현재 시각 (로그 수신 시간)
+        receive_time = datetime.now(pytz.UTC)
+
+        # 지연 시간 계산 (ms)
+        latency_ms = (receive_time.timestamp() - event_time.timestamp()) * 1000
+
+        # 틱 로그 기록 (상세 정보)
+        tick_logger.info(
+            f"Price: {price:.2f} | "
+            f"Qty: {quantity:.6f} | "
+            f"TradeTime: {trade_time.strftime('%H:%M:%S.%f')[:-3]} | "
+            f"EventTime: {event_time.strftime('%H:%M:%S.%f')[:-3]} | "
+            f"Latency: {latency_ms:.1f}ms"
+        )
+
         if self.position is not None:
             return  # 이미 포지션 있으면 패스
-
-        # 현재 가격
-        price = float(trade['p'])
 
         # 최신 BB 값 (마지막 마감된 봉 기준)
         latest = self.candle_5m.get_latest_indicators()
