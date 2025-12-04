@@ -50,8 +50,8 @@ PROGRESS_UPDATE_INTERVAL = 15000  # 진행 상황 업데이트 간격 (캔들 �
 
 # Bollinger Band 설정
 BB_SETTINGS = [
-    {'length': 20, 'std': 2, 'suffix': '20_2'},  # BB(20,2)
-    {'length': 4, 'std': 4, 'suffix': '4_4'}     # BB(4,4)
+    {'length': 20, 'std': 2, 'suffix': '20_2', 'source': 'Close'},  # BB(20,2) - 종가 기준
+    {'length': 4, 'std': 4, 'suffix': '4_4', 'source': 'Open'}      # BB(4,4) - 시가 기준
 ]
 
 # ================================================================================
@@ -64,7 +64,7 @@ TITLE = "Double Bollinger Band Strategy - 백테스트 데이터 준비"
 # 1. Bollinger Band 계산 함수
 # ================================================================================
 
-def calculate_bollinger_band(df, length, std_dev, suffix=''):
+def calculate_bollinger_band(df, length, std_dev, suffix='', source='Close'):
     """
     Bollinger Band 계산
 
@@ -73,17 +73,18 @@ def calculate_bollinger_band(df, length, std_dev, suffix=''):
     - length: SMA 기간
     - std_dev: 표준편차 배수
     - suffix: 컬럼명 suffix (예: '20_2', '4_4')
+    - source: BB 계산에 사용할 가격 소스 ('Close' 또는 'Open')
 
     Returns:
     - df with Bollinger Band columns added
     """
     df = df.copy()
 
-    # SMA 계산
-    sma = df['Close'].rolling(window=length).mean()
+    # SMA 계산 (소스 선택)
+    sma = df[source].rolling(window=length).mean()
 
     # 표준편차 계산 (TradingView 표준: population std, ddof=0)
-    std = df['Close'].rolling(window=length).std(ddof=0)
+    std = df[source].rolling(window=length).std(ddof=0)
 
     # Upper/Lower Band 계산
     upper = sma + (std_dev * std)
@@ -112,9 +113,11 @@ def calculate_all_indicators(df):
             df,
             length=setting['length'],
             std_dev=setting['std'],
-            suffix=setting['suffix']
+            suffix=setting['suffix'],
+            source=setting.get('source', 'Close')  # 기본값은 종가
         )
-        print(f"      - BB({setting['length']},{setting['std']}) 완료")
+        source_name = setting.get('source', 'Close')
+        print(f"      - BB({setting['length']},{setting['std']}) [{source_name}] 완료")
 
     return df
 

@@ -22,8 +22,8 @@ import os
 # ================================================================================
 
 # 백테스트 기간
-START_DATE = '2020-12-01'
-END_DATE = '2022-11-30'
+START_DATE = '2025-10-01'
+END_DATE = '2025-11-30'
 
 # 데이터 파일 경로
 DATA_FILE = 'backtest_data/BTCUSDT_double_bb_2019_10_11.csv'
@@ -39,7 +39,7 @@ POSITION_SIZE_PCT = 1.0   # 자본의 몇 %를 사용할지 (1.0 = 100%)
 TAKE_PROFIT_PCT = 0.003   # 익절 비율 (0.003 = 0.3%)
 
 # 수수료 설정
-FEE_RATE = 0.0004         # 수수료율 (0.04% = 테이커 기준)
+FEE_RATE = 0.000275         # 수수료율 (0.04% = 테이커 기준)
 
 # 결과 저장
 OUTPUT_CSV = 'backtest_results_double_bb.csv'
@@ -91,6 +91,7 @@ class DoubleBBBacktester:
         """
         LONG 진입 조건 확인
         - Low가 bb_lower_20_2와 bb_lower_4_4 둘 다 터치
+        - 진입가: 두 lower band 중 더 낮은 값 (더 유리한 가격)
         """
         low = row['Low']
         bb_lower_20_2 = row['bb_lower_20_2']
@@ -98,13 +99,16 @@ class DoubleBBBacktester:
 
         # 두 밴드 모두 터치 (Low가 두 lower band 이하)
         if low <= bb_lower_20_2 and low <= bb_lower_4_4:
-            return True, bb_lower_4_4  # 4/4 값에 진입
+            # 더 낮은 값에 진입 (롱일 때 더 유리)
+            entry_price = min(bb_lower_20_2, bb_lower_4_4)
+            return True, entry_price
         return False, None
 
     def check_short_entry(self, row):
         """
         SHORT 진입 조건 확인
         - High가 bb_upper_20_2와 bb_upper_4_4 둘 다 터치
+        - 진입가: 두 upper band 중 더 높은 값 (더 유리한 가격)
         """
         high = row['High']
         bb_upper_20_2 = row['bb_upper_20_2']
@@ -112,7 +116,9 @@ class DoubleBBBacktester:
 
         # 두 밴드 모두 터치 (High가 두 upper band 이상)
         if high >= bb_upper_20_2 and high >= bb_upper_4_4:
-            return True, bb_upper_4_4  # 4/4 값에 진입
+            # 더 높은 값에 진입 (숏일 때 더 유리)
+            entry_price = max(bb_upper_20_2, bb_upper_4_4)
+            return True, entry_price
         return False, None
 
     def calculate_position_size(self, entry_price):
