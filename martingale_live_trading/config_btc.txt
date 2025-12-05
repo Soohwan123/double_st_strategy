@@ -1,0 +1,36 @@
+# BTCUSDC Grid Martingale Configuration
+# 프로그램 실행 중에도 이 파일을 수정하면 자동 반영됩니다.
+# 주석(#)과 빈 줄은 무시됩니다.
+
+# 자본 설정
+INITIAL_CAPITAL=1000.0
+
+# 레버리지
+LEVERAGE_LONG=20
+LEVERAGE_SHORT=5
+
+# 거래 방향: LONG, SHORT, BOTH
+TRADE_DIRECTION=LONG
+
+# 그리드 설정
+GRID_RANGE_PCT=0.040
+
+# 최대 진입 레벨
+MAX_ENTRY_LEVEL=4
+
+# 진입 비율 (쉼표로 구분)
+ENTRY_RATIOS=0.05,0.20,0.25,0.50
+
+# 레벨별 진입 거리 (쉼표로 구분)
+LEVEL_DISTANCES=0.005,0.010,0.040,0.045
+
+# 손절 거리
+SL_DISTANCE=0.05
+
+# 익절 설정
+TP_PCT=0.005
+BE_PCT=0.001
+
+# 수수료
+MAKER_FEE=0.0
+TAKER_FEE=0.000275
