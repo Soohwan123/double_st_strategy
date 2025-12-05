@@ -95,11 +95,29 @@ class StateManager:
                 return None
 
             with open(self.state_path, 'r') as f:
-                state = json.load(f)
+                content = f.read()
+
+            # 빈 파일 체크
+            if not content.strip():
+                self.logger.warning("상태 파일이 비어있음 - 새로 시작")
+                return None
+
+            state = json.loads(content)
 
             self.logger.info(f"상태 복구 완료: {state.get('last_updated', 'unknown')}")
             return state
 
+        except json.JSONDecodeError as e:
+            self.logger.error(f"상태 복구 실패 (JSON 파싱 오류): {e}")
+            self.logger.error(f"파일 경로: {self.state_path}")
+            # 손상된 파일 내용 일부 출력
+            try:
+                with open(self.state_path, 'r') as f:
+                    preview = f.read(200)
+                self.logger.error(f"파일 내용 미리보기: {repr(preview)}")
+            except:
+                pass
+            return None
         except Exception as e:
             self.logger.error(f"상태 복구 실패: {e}")
             return None

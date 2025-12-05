@@ -138,6 +138,32 @@ class GridMartingaleStrategy:
         except Exception as e:
             self.logger.error(f"PnL 기반 자본 업데이트 실패: {e}")
 
+    async def _sync_position_from_binance(self):
+        """
+        바이낸스 API에서 실제 포지션 정보를 가져와 평단가/수량 동기화
+        진입 체결 후 호출하여 정확한 평단가 사용
+        """
+        try:
+            pos_info = await self.binance.get_position_info()
+
+            if pos_info:
+                old_avg = self.position.avg_price
+                old_size = self.position.total_size
+
+                # 바이낸스 실제 값으로 덮어쓰기
+                self.position.avg_price = pos_info['entry_price']
+                self.position.total_size = pos_info['size']
+
+                self.logger.info(
+                    f"포지션 동기화: 평단가 ${old_avg:.2f} → ${pos_info['entry_price']:.2f}, "
+                    f"수량 {old_size:.6f} → {pos_info['size']:.6f}"
+                )
+            else:
+                self.logger.warning("포지션 동기화 실패: 바이낸스에 포지션 없음")
+
+        except Exception as e:
+            self.logger.error(f"포지션 동기화 에러: {e}")
+
     # =========================================================================
     # 가격 계산
     # =========================================================================
@@ -256,13 +282,23 @@ class GridMartingaleStrategy:
         # 실제 포지션 확인
         pos_info = await self.binance.get_position_info()
         if pos_info:
-            self.logger.info(f"바이낸스 포지션 확인: {pos_info['side']}, 평단가 ${pos_info['entry_price']:.2f}")
+            self.logger.info(f"바이낸스 포지션 확인: {pos_info['side']}, 평단가 ${pos_info['entry_price']:.2f}, 수량 {pos_info['size']:.6f}")
 
-            # 로컬 상태와 비교
+            # 포지션이 있으면 무조건 바이낸스 값으로 동기화
             if self.position.has_position():
-                if abs(self.position.avg_price - pos_info['entry_price']) > 1:
-                    self.logger.warning("로컬/바이낸스 평단가 불일치! 바이낸스 값 사용")
-                    self.position.avg_price = pos_info['entry_price']
+                old_avg = self.position.avg_price
+                old_size = self.position.total_size
+
+                self.position.avg_price = pos_info['entry_price']
+                self.position.total_size = pos_info['size']
+
+                self.logger.info(
+                    f"포지션 동기화: 평단가 ${old_avg:.2f} → ${pos_info['entry_price']:.2f}, "
+                    f"수량 {old_size:.6f} → {pos_info['size']:.6f}"
+                )
+
+                # 동기화 후 상태 저장
+                self._save_state()
 
         # 대기 주문 확인
         open_orders = await self.binance.get_open_orders()
@@ -525,9 +561,12 @@ class GridMartingaleStrategy:
             self.position.direction = direction
             self.logger.info(f"첫 진입: {direction}")
 
-        # 진입 추가
+        # 진입 추가 (로컬 계산)
         self.position.add_entry(price, quantity, level)
         self.orders.remove_entry_order(level)
+
+        # 바이낸스 API에서 실제 평단가/수량 동기화
+        await self._sync_position_from_binance()
 
         self.logger.info(
             f"Level {level+1} 체결: ${price:.2f}, "
