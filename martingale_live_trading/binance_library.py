@@ -121,8 +121,7 @@ class BinanceFuturesClient:
                 'side': 'LONG' or 'SHORT',
                 'size': float,
                 'entry_price': float,
-                'unrealized_pnl': float,
-                'leverage': int
+                'unrealized_pnl': float
             }
         """
         try:
@@ -135,8 +134,7 @@ class BinanceFuturesClient:
                         'side': 'LONG' if position_amt > 0 else 'SHORT',
                         'size': abs(position_amt),
                         'entry_price': float(pos['entryPrice']),
-                        'unrealized_pnl': float(pos['unRealizedProfit']),
-                        'leverage': int(pos['leverage'])
+                        'unrealized_pnl': float(pos['unRealizedProfit'])
                     }
 
             return None
@@ -656,3 +654,89 @@ class BinanceFuturesClient:
         except BinanceAPIException as e:
             self.logger.error(f"현재가 조회 실패: {e}")
             return None
+
+    # =========================================================================
+    # 거래 PnL 조회
+    # =========================================================================
+
+    async def get_recent_trade_pnl(self, order_id: Optional[str] = None, limit: int = 10) -> Dict[str, float]:
+        """
+        최근 거래의 실현 PnL 및 수수료 조회
+
+        Args:
+            order_id: 특정 주문 ID (None이면 최근 거래)
+            limit: 조회할 거래 수
+
+        Returns:
+            {'realized_pnl': float, 'commission': float, 'net_pnl': float}
+        """
+        try:
+            trades = self.client.futures_account_trades(
+                symbol=self.symbol,
+                limit=limit
+            )
+
+            if not trades:
+                return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+
+            # 특정 주문 ID로 필터링
+            if order_id:
+                trades = [t for t in trades if str(t.get('orderId')) == str(order_id)]
+
+            # 합산
+            total_pnl = sum(float(t.get('realizedPnl', 0)) for t in trades)
+            total_commission = sum(float(t.get('commission', 0)) for t in trades)
+            net_pnl = total_pnl - total_commission
+
+            self.logger.debug(f"거래 PnL 조회: pnl=${total_pnl:.4f}, 수수료=${total_commission:.4f}, 순익=${net_pnl:.4f}")
+
+            return {
+                'realized_pnl': total_pnl,
+                'commission': total_commission,
+                'net_pnl': net_pnl
+            }
+
+        except BinanceAPIException as e:
+            self.logger.error(f"거래 PnL 조회 실패: {e}")
+            return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+
+    async def get_last_closed_trade_pnl(self) -> Dict[str, float]:
+        """
+        마지막 청산 거래의 PnL 조회
+        (reduceOnly=True 또는 포지션 축소 거래)
+
+        Returns:
+            {'realized_pnl': float, 'commission': float, 'net_pnl': float}
+        """
+        try:
+            trades = self.client.futures_account_trades(
+                symbol=self.symbol,
+                limit=20
+            )
+
+            if not trades:
+                return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+
+            # realizedPnl이 0이 아닌 거래들 (청산 거래)
+            close_trades = [t for t in trades if float(t.get('realizedPnl', 0)) != 0]
+
+            if not close_trades:
+                return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+
+            # 가장 최근 청산 거래
+            last_trade = close_trades[-1]
+            realized_pnl = float(last_trade.get('realizedPnl', 0))
+            commission = float(last_trade.get('commission', 0))
+            net_pnl = realized_pnl - commission
+
+            self.logger.info(f"마지막 청산 PnL: pnl=${realized_pnl:.4f}, 수수료=${commission:.4f}, 순익=${net_pnl:.4f}")
+
+            return {
+                'realized_pnl': realized_pnl,
+                'commission': commission,
+                'net_pnl': net_pnl
+            }
+
+        except BinanceAPIException as e:
+            self.logger.error(f"마지막 청산 PnL 조회 실패: {e}")
+            return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}

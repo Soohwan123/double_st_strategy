@@ -33,7 +33,7 @@ END_DATE = '2025-12-31'
 SYMBOL = 'ETHUSDT'
 
 # 타임프레임 설정
-TIMEFRAME = '5m'
+TIMEFRAME = '1m'
 
 # 디렉토리 설정
 OUTPUT_DIR = 'historical_data/'

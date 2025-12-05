@@ -27,15 +27,15 @@ from datetime import datetime
 # ================================================================================
 
 # 데이터 파일
-DATA_FILE = 'historical_data/BTCUSDT_5m_raw.csv'
+DATA_FILE = 'historical_data/BTCUSDT_1m_raw.csv'
 
 # 백테스트 기간
-START_DATE = '2023-01-01'
-END_DATE = '2024-01-30'
+START_DATE = '2024-01-01'
+END_DATE = '2025-12-30'
 
 # 자본 설정
 INITIAL_CAPITAL = 1000.0  # USDT
-LEVERAGE_LONG = 15   # LONG 레버리지 (파라미터)
+LEVERAGE_LONG = 20   # LONG 레버리지 (파라미터)
 LEVERAGE_SHORT = 5  # SHORT 레버리지 (파라미터)
 
 # 거래 방향 설정
@@ -43,14 +43,14 @@ LEVERAGE_SHORT = 5  # SHORT 레버리지 (파라미터)
 TRADE_DIRECTION = 'LONG'
 
 # 그리드 설정
-GRID_RANGE_PCT = 0.010  # ±5% 범위 : 이더리움은 0.01로
+GRID_RANGE_PCT = 0.040  # ±4% 범위 : 이더리움은 0.02로
 MAX_ENTRY_LEVEL = 4  # 최대 진입 레벨
 # 진입 비율
 ENTRY_RATIOS = [0.05, 0.20, 0.25, 0.5]  # 5%, 10%, 30%, 55%
 
 # 레벨별 진입 거리 (기준가 대비 %)
-# Level 1: 0.5%, Level 2: 2.5%, Level 3: 4%, Level 4: 4.5%, 손절: 5%
-LEVEL_DISTANCES = [0.005, 0.010, 0.04, 0.045]  # 진입 레벨
+# Level 1: 0.5%, Level 2: 1.0%, Level 3: 4%, Level 4: 4.5%, 손절: 5%
+LEVEL_DISTANCES = [0.005, 0.010, 0.040, 0.045]  # 진입 레벨
 SL_DISTANCE = 0.05  # 손절 레벨 (5%)
 
 # 익절 설정

@@ -1,37 +1,49 @@
 {
-  "grid_center": 92350.0,
+  "grid_center": 92271.9,
   "capital": 404.08164044,
-  "position": null,
+  "position": {
+    "direction": "LONG",
+    "entries": [
+      {
+        "price": 91810.54049999999,
+        "btc_amount": 0.00440125543580696,
+        "level": 0
+      }
+    ],
+    "avg_price": 91810.54049999999,
+    "total_size": 0.00440125543580696,
+    "current_level": 1,
+    "level_prices": [
+      91810.54049999999,
+      null,
+      null,
+      null
+    ],
+    "level1_btc_amount": 0.00440125543580696,
+    "entry_fees": 0.0
+  },
   "orders": {
     "pending_entry_orders": [
       {
-        "order_id": "36216825627",
-        "level": 0,
-        "price": 91888.25,
-        "quantity": 0.004397533312909975
-      },
-      {
-        "order_id": "36216826060",
+        "order_id": "36216218476",
         "level": 1,
-        "price": 91426.5,
-        "quantity": 0.017678972308466365
+        "price": 91349.181,
+        "quantity": 0.01769393599445626
       },
       {
-        "order_id": "36216826569",
+        "order_id": "36216219155",
         "level": 2,
-        "price": 88656.0,
-        "quantity": 0.022789300241382423
-      },
-      {
-        "order_id": "36216827870",
-        "level": 3,
-        "price": 88194.25,
-        "quantity": 0.04581723189890497
+        "price": 88581.02399999999,
+        "quantity": 0.022808589367853776
       }
     ],
-    "tp_order": null,
+    "tp_order": {
+      "order_id": "36232734704",
+      "price": 92269.59320249998,
+      "quantity": 0.00440125543580696
+    },
     "be_order": null,
     "sl_order": null
   },
-  "last_updated": "2025-12-05T01:04:58.709305+00:00"
+  "last_updated": "2025-12-05T04:46:25.476511+00:00"
 }

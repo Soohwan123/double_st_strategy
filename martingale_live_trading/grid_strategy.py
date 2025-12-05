@@ -85,29 +85,58 @@ class GridMartingaleStrategy:
         return self.dynamic_config.get_list(key, DEFAULT_PARAMS.get(key, []))
 
     # =========================================================================
-    # 잔고 동기화
+    # 자본 관리 (로컬 추적)
     # =========================================================================
 
-    async def sync_balance(self):
+    async def init_capital(self):
         """
-        계좌 잔고 동기화
-        바이낸스 실제 잔고를 가져와 capital 업데이트
+        초기 자본 설정
+        - state 파일에 capital이 있으면 그 값 사용 (복구)
+        - 없으면 바이낸스 잔고의 절반을 초기 자본으로 설정 (BTC/ETH 반반)
         """
+        # state에서 capital 복구 시도
+        state = self.state_manager.load_state()
+        if state and 'capital' in state and state['capital'] > 0:
+            self.capital = state['capital']
+            self.logger.info(f"저장된 자본 복구: ${self.capital:.2f}")
+            return
+
+        # 새로 시작: 바이낸스 잔고의 절반 사용
         try:
             balance = await self.binance.get_account_balance('USDC')
             wallet_balance = balance['wallet_balance']
-            available_balance = balance['available_balance']
 
-            # 설정된 최대 자본과 실제 잔고 중 작은 값 사용
-            max_capital = self._get_param('INITIAL_CAPITAL', 1000.0)
-            self.capital = min(wallet_balance, max_capital)
+            # 총 잔고의 절반을 이 심볼의 운용 자본으로
+            self.capital = wallet_balance / 2
 
-            self.logger.info(f"잔고 동기화: 계좌=${wallet_balance:.2f}, 가용=${available_balance:.2f}, 운용=${self.capital:.2f}")
+            self.logger.info(f"초기 자본 설정: 총 잔고 ${wallet_balance:.2f} / 2 = ${self.capital:.2f}")
 
         except Exception as e:
-            self.logger.error(f"잔고 동기화 실패: {e}")
-            # 실패 시 설정값 사용
-            self.capital = self._get_param('INITIAL_CAPITAL', 1000.0)
+            self.logger.error(f"잔고 조회 실패: {e}")
+            # 실패 시 설정값의 절반 사용
+            self.capital = self._get_param('INITIAL_CAPITAL', 1000.0) / 2
+            self.logger.warning(f"기본값 사용: ${self.capital:.2f}")
+
+    async def update_capital_from_pnl(self):
+        """
+        청산 후 바이낸스 API에서 realizedPnl 조회하여 capital 업데이트
+        """
+        try:
+            pnl_data = await self.binance.get_last_closed_trade_pnl()
+            net_pnl = pnl_data['net_pnl']
+
+            old_capital = self.capital
+            self.capital += net_pnl
+
+            self.logger.info(
+                f"자본 업데이트: ${old_capital:.2f} + ${net_pnl:.4f} = ${self.capital:.2f}"
+            )
+
+            # 상태 저장
+            self._save_state()
+
+        except Exception as e:
+            self.logger.error(f"PnL 기반 자본 업데이트 실패: {e}")
 
     # =========================================================================
     # 가격 계산
@@ -181,17 +210,17 @@ class GridMartingaleStrategy:
         """
         전략 초기화
         - 상태 복구 또는 새로 시작
-        - 잔고 확인 및 동기화
+        - 자본 초기화 (로컬 추적 방식)
         """
         self.logger.info("=" * 60)
         self.logger.info("Grid Martingale Strategy 초기화")
         self.logger.info("=" * 60)
 
-        # 잔고 동기화
-        await self.sync_balance()
+        # 자본 초기화 (state에서 복구 또는 바이낸스 잔고의 절반)
+        await self.init_capital()
         self.logger.info(f"운용 자본: ${self.capital:.2f}")
 
-        # 상태 복구 시도
+        # 상태 복구 시도 (capital 제외한 나머지)
         state = self.state_manager.load_state()
         if state:
             await self._restore_state(state)
@@ -519,13 +548,13 @@ class GridMartingaleStrategy:
         """TP 체결 시 처리 (Level 1 전량 익절)"""
         pnl = self._calculate_pnl(price)
 
-        self.logger.info(f"TP 체결: ${price:.2f}, PnL: ${pnl:.2f}")
+        self.logger.info(f"TP 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
 
         # 거래 기록
         self._record_trade('TP', self.position.current_level, price, self.position.total_size, pnl)
 
-        # 잔고 동기화 (익절 후 잔고 변동 반영)
-        await self.sync_balance()
+        # 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
+        await self.update_capital_from_pnl()
 
         # 그리드 재설정 (익절가가 새 center)
         await self.reset_grid_after_full_close(price)
@@ -539,13 +568,13 @@ class GridMartingaleStrategy:
         else:
             pnl = (self.position.avg_price - price) * close_amount
 
-        self.logger.info(f"BE 체결: ${price:.2f}, PnL: ${pnl:.2f}")
+        self.logger.info(f"BE 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
 
         # 거래 기록
         self._record_trade('PARTIAL_BE', self.position.current_level, price, close_amount, pnl)
 
-        # 잔고 동기화 (BE 청산 후 잔고 변동 반영)
-        await self.sync_balance()
+        # 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
+        await self.update_capital_from_pnl()
 
         # Level 1 물량만 남기고 그리드 재설정
         self.position.total_size = self.position.level1_btc_amount
@@ -560,13 +589,13 @@ class GridMartingaleStrategy:
         """SL 체결 시 처리"""
         pnl = self._calculate_pnl(price)
 
-        self.logger.info(f"SL 체결: ${price:.2f}, PnL: ${pnl:.2f}")
+        self.logger.info(f"SL 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
 
         # 거래 기록
         self._record_trade('SL', self.position.current_level, price, self.position.total_size, pnl)
 
-        # 잔고 동기화 (손절 후 잔고 변동 반영)
-        await self.sync_balance()
+        # 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
+        await self.update_capital_from_pnl()
 
         # 그리드 재설정 (손절가가 새 center)
         await self.reset_grid_after_full_close(price)
