@@ -395,17 +395,32 @@ class GridMartingaleStrategy:
         Level 1 물량만 남긴 상태에서 Level 2~4 재설정
         """
         direction = self.position.direction
-        new_level1_price = self.position.avg_price  # 현재 평단가 = 새 Level 1 가격
-        self.grid_center = self.calculate_new_grid_center(new_level1_price, direction)
 
-        self.logger.info(f"BE 후 그리드 재설정: new_center=${self.grid_center:.2f}")
-
-        # 기존 주문 취소
+        # 1. 기존 주문 전부 취소
         await self.binance.cancel_all_orders()
         self.orders.clear_all()
+        self.logger.info("BE 후 기존 주문 전부 취소 완료")
 
-        # Level 1은 이미 체결된 상태
-        # Level 2~4 지정가 주문 재설정
+        # 2. 바이낸스 실제 포지션 동기화 (BE 체결 후 실제 남은 물량 확인)
+        await self._sync_position_from_binance()
+
+        # 3. 바이낸스 대기 주문 수 확인
+        try:
+            open_orders = await self.binance.get_open_orders()
+            self.logger.info(f"바이낸스 대기 주문 수: {len(open_orders)}개")
+        except Exception as e:
+            self.logger.warning(f"대기 주문 조회 실패: {e}")
+
+        # 4. 현재 상태 로깅
+        self.logger.info(f"BE 후 포지션 상태: Level {self.position.current_level}, "
+                        f"평단가 ${self.position.avg_price:.2f}, 수량 {self.position.total_size:.6f}")
+
+        # 5. 그리드 재설정
+        new_level1_price = self.position.avg_price  # 현재 평단가 = 새 Level 1 가격
+        self.grid_center = self.calculate_new_grid_center(new_level1_price, direction)
+        self.logger.info(f"BE 후 그리드 재설정: new_center=${self.grid_center:.2f}")
+
+        # 6. Level 2~4 지정가 주문 재설정 (Level 1은 이미 체결된 상태)
         max_level = self._get_param('MAX_ENTRY_LEVEL', 4)
         entry_ratios = self._get_param_list('ENTRY_RATIOS')
         leverage = self._get_param('LEVERAGE_LONG', 20) if direction == 'LONG' else self._get_param('LEVERAGE_SHORT', 5)
@@ -439,10 +454,10 @@ class GridMartingaleStrategy:
                 )
                 self.logger.info(f"Level {level+1} 주문 재설정: ${level_price:.2f}")
 
-        # TP 주문 설정 (Level 1만 있으므로)
+        # 7. TP 주문 설정 (Level 1만 있으므로)
         await self._set_tp_order()
 
-        # 상태 저장
+        # 8. 상태 저장
         self._save_state()
 
     # =========================================================================
@@ -471,26 +486,32 @@ class GridMartingaleStrategy:
             self.logger.info(f"TP 주문 설정: ${tp_price:.2f}")
 
     async def _set_be_order(self):
-        """본절(BE) 주문 설정 - Level 2+ 체결된 상태"""
+        """본절(BE) 주문 설정 - Level 2+ 체결된 상태, Level 1 물량 제외 덜어내기"""
         if not self.position.has_position():
             return
 
         be_price = self.calculate_be_price(self.position.avg_price, self.position.direction)
 
-        # BE는 전체 물량 청산
+        # 덜어낼 물량 = 전체 - Level 1 물량 (Level 1은 유지)
+        close_amount = self.position.total_size - self.position.level1_btc_amount
+
+        if close_amount <= 0:
+            self.logger.warning(f"BE 주문 스킵: 덜어낼 물량 없음 (total={self.position.total_size}, level1={self.position.level1_btc_amount})")
+            return
+
         order = await self.binance.place_limit_close(
             direction=self.position.direction,
             price=be_price,
-            quantity=self.position.total_size
+            quantity=close_amount
         )
 
         if order:
             self.orders.set_be_order(
                 order_id=str(order.get('orderId', '')),
                 price=be_price,
-                quantity=self.position.total_size
+                quantity=close_amount
             )
-            self.logger.info(f"BE 주문 설정: ${be_price:.2f}")
+            self.logger.info(f"BE 주문 설정: ${be_price:.2f}, 덜어내기 수량: {close_amount:.6f} (Level1 {self.position.level1_btc_amount:.6f} 유지)")
 
     async def _set_sl_order(self):
         """손절(SL) 주문 설정 - Level 4 체결 후"""
