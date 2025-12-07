@@ -92,7 +92,7 @@ class GridMartingaleStrategy:
         """
         초기 자본 설정
         - state 파일에 capital이 있으면 그 값 사용 (복구)
-        - 없으면 바이낸스 잔고의 절반을 초기 자본으로 설정 (BTC/ETH 반반)
+        - 없으면 바이낸스 잔고의 33%를 초기 자본으로 설정 (BTC/ETH/여유분 3분할)
         """
         # state에서 capital 복구 시도
         state = self.state_manager.load_state()
@@ -101,20 +101,20 @@ class GridMartingaleStrategy:
             self.logger.info(f"저장된 자본 복구: ${self.capital:.2f}")
             return
 
-        # 새로 시작: 바이낸스 잔고의 절반 사용
+        # 새로 시작: 바이낸스 잔고의 33% 사용 (BTC/ETH/여유분 3분할)
         try:
             balance = await self.binance.get_account_balance('USDC')
             wallet_balance = balance['wallet_balance']
 
-            # 총 잔고의 절반을 이 심볼의 운용 자본으로
-            self.capital = wallet_balance / 2
+            # 총 잔고의 33%를 이 심볼의 운용 자본으로
+            self.capital = wallet_balance / 3
 
-            self.logger.info(f"초기 자본 설정: 총 잔고 ${wallet_balance:.2f} / 2 = ${self.capital:.2f}")
+            self.logger.info(f"초기 자본 설정: 총 잔고 ${wallet_balance:.2f} / 3 = ${self.capital:.2f}")
 
         except Exception as e:
             self.logger.error(f"잔고 조회 실패: {e}")
-            # 실패 시 설정값의 절반 사용
-            self.capital = self._get_param('INITIAL_CAPITAL', 1000.0) / 2
+            # 실패 시 설정값의 33% 사용
+            self.capital = self._get_param('INITIAL_CAPITAL', 1000.0) / 3
             self.logger.warning(f"기본값 사용: ${self.capital:.2f}")
 
     async def update_capital_from_pnl(self):
@@ -465,44 +465,66 @@ class GridMartingaleStrategy:
     # =========================================================================
 
     async def _set_tp_order(self):
-        """익절(TP) 주문 설정 - Level 1만 체결된 상태"""
+        """익절(TP) 주문 설정 - Level 1만 체결된 상태, 바이낸스 실제 포지션 기준"""
         if not self.position.has_position():
             return
 
-        tp_price = self.calculate_tp_price(self.position.avg_price, self.position.direction)
+        # 1. 바이낸스 실제 포지션 조회 (실패 시 재시도)
+        pos_info = await self.binance.get_position_info_with_retry()
+        if not pos_info:
+            self.logger.error("TP 주문 실패: 포지션 조회 불가")
+            return
 
+        actual_size = pos_info['size']
+        tp_price = self.calculate_tp_price(pos_info['entry_price'], self.position.direction)
+
+        self.logger.info(f"TP 주문 준비: 바이낸스 포지션 {actual_size:.6f}, 평단가 ${pos_info['entry_price']:.2f}")
+
+        # 2. 전량 청산 주문 (실패 시 0.1%씩 줄이며 재시도)
         order = await self.binance.place_limit_close(
             direction=self.position.direction,
             price=tp_price,
-            quantity=self.position.total_size
+            quantity=actual_size,
+            retry_on_reduce_only=True
         )
 
         if order:
             self.orders.set_tp_order(
                 order_id=str(order.get('orderId', '')),
                 price=tp_price,
-                quantity=self.position.total_size
+                quantity=actual_size
             )
-            self.logger.info(f"TP 주문 설정: ${tp_price:.2f}")
+            self.logger.info(f"TP 주문 설정: ${tp_price:.2f}, 수량: {actual_size:.6f}")
 
     async def _set_be_order(self):
-        """본절(BE) 주문 설정 - Level 2+ 체결된 상태, Level 1 물량 제외 덜어내기"""
+        """본절(BE) 주문 설정 - Level 2+ 체결된 상태, 바이낸스 실제 포지션에서 Level 1 제외"""
         if not self.position.has_position():
             return
 
-        be_price = self.calculate_be_price(self.position.avg_price, self.position.direction)
-
-        # 덜어낼 물량 = 전체 - Level 1 물량 (Level 1은 유지)
-        close_amount = self.position.total_size - self.position.level1_btc_amount
-
-        if close_amount <= 0:
-            self.logger.warning(f"BE 주문 스킵: 덜어낼 물량 없음 (total={self.position.total_size}, level1={self.position.level1_btc_amount})")
+        # 1. 바이낸스 실제 포지션 조회 (실패 시 재시도)
+        pos_info = await self.binance.get_position_info_with_retry()
+        if not pos_info:
+            self.logger.error("BE 주문 실패: 포지션 조회 불가")
             return
 
+        actual_size = pos_info['size']
+        be_price = self.calculate_be_price(pos_info['entry_price'], self.position.direction)
+
+        # 2. 덜어낼 물량 = 바이낸스 실제 포지션 - Level 1 물량
+        close_amount = actual_size - self.position.level1_btc_amount
+
+        self.logger.info(f"BE 주문 준비: 바이낸스 포지션 {actual_size:.6f}, Level1 {self.position.level1_btc_amount:.6f}, 덜어내기 {close_amount:.6f}")
+
+        if close_amount <= 0:
+            self.logger.warning(f"BE 주문 스킵: 덜어낼 물량 없음")
+            return
+
+        # 3. 덜어내기 청산 주문 (실패 시 0.1%씩 줄이며 재시도)
         order = await self.binance.place_limit_close(
             direction=self.position.direction,
             price=be_price,
-            quantity=close_amount
+            quantity=close_amount,
+            retry_on_reduce_only=True
         )
 
         if order:

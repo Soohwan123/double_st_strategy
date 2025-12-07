@@ -143,6 +143,29 @@ class BinanceFuturesClient:
             self.logger.error(f"포지션 정보 조회 실패: {e}")
             raise
 
+    async def get_position_info_with_retry(self, max_retries: int = 10, delay: float = 1.0) -> Optional[Dict[str, Any]]:
+        """
+        포지션 정보 조회 (실패 시 재시도)
+
+        Args:
+            max_retries: 최대 재시도 횟수
+            delay: 재시도 간 대기 시간 (초)
+
+        Returns:
+            포지션 정보 또는 None
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self.get_position_info()
+            except Exception as e:
+                self.logger.warning(f"포지션 조회 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    self.logger.error(f"포지션 조회 최대 재시도 초과")
+                    return None
+
     # =========================================================================
     # 레버리지/마진 설정
     # =========================================================================
@@ -263,7 +286,7 @@ class BinanceFuturesClient:
         price: float,
         base_value: float,
         leverage: int,
-        retry_decrement_pct: float = 0.01,
+        retry_decrement_pct: float = 0.001,
         min_ratio: float = 0.30
     ) -> Optional[Dict[str, Any]]:
         """
@@ -274,7 +297,7 @@ class BinanceFuturesClient:
             price: 진입 가격
             base_value: 기본 진입 금액 (USDT)
             leverage: 레버리지
-            retry_decrement_pct: 재시도 시 줄이는 비율 (1%)
+            retry_decrement_pct: 재시도 시 줄이는 비율 (0.1%)
             min_ratio: 최소 비율 (30% 이하로는 안 줄임)
 
         Returns:
@@ -353,7 +376,10 @@ class BinanceFuturesClient:
         self,
         direction: str,
         price: float,
-        quantity: float
+        quantity: float,
+        retry_on_reduce_only: bool = False,
+        retry_decrement_pct: float = 0.001,
+        min_ratio: float = 0.50
     ) -> Optional[Dict[str, Any]]:
         """
         지정가 청산 주문 (익절/본절)
@@ -362,6 +388,9 @@ class BinanceFuturesClient:
             direction: 포지션 방향 ('LONG' 또는 'SHORT')
             price: 청산 가격
             quantity: 주문 수량
+            retry_on_reduce_only: ReduceOnly 실패 시 재시도 여부
+            retry_decrement_pct: 재시도 시 줄이는 비율 (0.1%)
+            min_ratio: 최소 비율 (50% 이하로는 안 줄임)
 
         Returns:
             주문 정보 또는 None
@@ -369,28 +398,58 @@ class BinanceFuturesClient:
         # 포지션 청산은 반대 방향
         side = SIDE_SELL if direction == 'LONG' else SIDE_BUY
         price = self._round_price(price)
-        quantity = self._round_qty(quantity)
+        original_quantity = quantity
+        current_quantity = quantity
+        min_quantity = original_quantity * min_ratio
 
         if self.dry_run:
-            self.logger.info(f"[DRY RUN] LIMIT Close: {direction} {quantity} @ ${price}")
+            self.logger.info(f"[DRY RUN] LIMIT Close: {direction} {self._round_qty(quantity)} @ ${price}")
             return {'orderId': 'DRY_RUN_CLOSE', 'status': 'DRY_RUN'}
 
-        try:
-            order = self.client.futures_create_order(
-                symbol=self.symbol,
-                side=side,
-                type='LIMIT',
-                price=price,
-                quantity=quantity,
-                timeInForce='GTC',
-                reduceOnly=True
-            )
-            self.logger.info(f"LIMIT Close 주문: {direction} {quantity} @ ${price}, ID: {order['orderId']}")
-            return order
+        attempt = 0
+        while current_quantity >= min_quantity:
+            rounded_qty = self._round_qty(current_quantity)
+            attempt += 1
 
-        except BinanceAPIException as e:
-            self.logger.error(f"지정가 청산 주문 실패: {e}")
-            return None
+            try:
+                order = self.client.futures_create_order(
+                    symbol=self.symbol,
+                    side=side,
+                    type='LIMIT',
+                    price=price,
+                    quantity=rounded_qty,
+                    timeInForce='GTC',
+                    reduceOnly=True
+                )
+
+                if current_quantity < original_quantity:
+                    used_pct = (current_quantity / original_quantity) * 100
+                    self.logger.warning(
+                        f"ReduceOnly 수량 조정으로 주문 성공: {used_pct:.1f}% "
+                        f"(시도 {attempt}회, {original_quantity:.6f} -> {rounded_qty:.6f})"
+                    )
+                self.logger.info(f"LIMIT Close 주문: {direction} {rounded_qty} @ ${price}, ID: {order['orderId']}")
+                return order
+
+            except BinanceAPIException as e:
+                error_msg = str(e)
+                if retry_on_reduce_only and ('ReduceOnly' in error_msg or 'rejected' in error_msg.lower()):
+                    # ReduceOnly 거부 - 0.1%씩 줄여서 재시도
+                    current_quantity -= original_quantity * retry_decrement_pct
+                    self.logger.warning(
+                        f"ReduceOnly 거부 (시도 {attempt}), 재시도: {self._round_qty(current_quantity):.6f} "
+                        f"({current_quantity/original_quantity*100:.1f}%)"
+                    )
+                    continue
+                else:
+                    self.logger.error(f"지정가 청산 주문 실패: {e}")
+                    return None
+
+        self.logger.error(
+            f"ReduceOnly 주문 실패: 최소 비율({min_ratio*100:.0f}%)까지 줄였으나 실패 "
+            f"(시도 {attempt}회)"
+        )
+        return None
 
     # =========================================================================
     # 스탑 마켓 (손절)
