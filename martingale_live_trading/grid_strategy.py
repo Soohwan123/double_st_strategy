@@ -337,8 +337,8 @@ class GridMartingaleStrategy:
 
         self.logger.info(f"거미줄 주문 설정: center=${center_price:.2f}, direction={direction}")
 
-        # 기존 주문 취소
-        await self.binance.cancel_all_orders()
+        # 기존 주문 취소 (완료 확인까지 반복)
+        await self._cancel_all_orders_with_verify()
         self.orders.clear_all()
 
         # 각 레벨별 지정가 주문
@@ -386,8 +386,35 @@ class GridMartingaleStrategy:
         self.position.reset()
         self.orders.clear_all()
 
+        # 모든 대기 주문 취소 (완료될 때까지 반복)
+        await self._cancel_all_orders_with_verify()
+
         # 새 거미줄 주문
         await self.setup_grid_orders(new_center)
+
+    async def _cancel_all_orders_with_verify(self, max_attempts: int = 5):
+        """
+        모든 대기 주문 취소 (완료 확인까지 반복)
+        """
+        for attempt in range(max_attempts):
+            # 주문 취소
+            await self.binance.cancel_all_orders()
+
+            # 잠시 대기 후 확인
+            await asyncio.sleep(0.5)
+
+            # 대기 주문 조회
+            try:
+                open_orders = await self.binance.get_open_orders()
+                if not open_orders or len(open_orders) == 0:
+                    self.logger.info(f"모든 주문 취소 완료 (시도 {attempt + 1}회)")
+                    return
+                else:
+                    self.logger.warning(f"아직 대기 주문 {len(open_orders)}개 남음, 재시도 중... (시도 {attempt + 1}/{max_attempts})")
+            except Exception as e:
+                self.logger.warning(f"주문 조회 실패: {e}")
+
+        self.logger.error(f"주문 취소 실패: {max_attempts}회 시도 후에도 주문 남아있음")
 
     async def reset_grid_after_partial_close(self):
         """
@@ -396,10 +423,9 @@ class GridMartingaleStrategy:
         """
         direction = self.position.direction
 
-        # 1. 기존 주문 전부 취소
-        await self.binance.cancel_all_orders()
+        # 1. 기존 주문 전부 취소 (완료 확인까지 반복)
+        await self._cancel_all_orders_with_verify()
         self.orders.clear_all()
-        self.logger.info("BE 후 기존 주문 전부 취소 완료")
 
         # 2. 바이낸스 실제 포지션 동기화 (BE 체결 후 실제 남은 물량 확인)
         await self._sync_position_from_binance()
@@ -407,13 +433,6 @@ class GridMartingaleStrategy:
         # 2.1. BE 후 남은 물량 = 새로운 Level 1 물량으로 업데이트
         self.position.level1_btc_amount = self.position.total_size
         self.logger.info(f"Level 1 물량 업데이트: {self.position.level1_btc_amount:.6f}")
-
-        # 3. 바이낸스 대기 주문 수 확인
-        try:
-            open_orders = await self.binance.get_open_orders()
-            self.logger.info(f"바이낸스 대기 주문 수: {len(open_orders)}개")
-        except Exception as e:
-            self.logger.warning(f"대기 주문 조회 실패: {e}")
 
         # 4. 현재 상태 로깅
         self.logger.info(f"BE 후 포지션 상태: Level {self.position.current_level}, "
