@@ -92,7 +92,7 @@ class GridMartingaleStrategy:
         """
         초기 자본 설정
         - state 파일에 capital이 있으면 그 값 사용 (복구)
-        - 없으면 바이낸스 잔고의 33%를 초기 자본으로 설정 (BTC/ETH/여유분 3분할)
+        - 없으면 바이낸스 잔고의 40%를 초기 자본으로 설정
         """
         # state에서 capital 복구 시도
         state = self.state_manager.load_state()
@@ -101,20 +101,20 @@ class GridMartingaleStrategy:
             self.logger.info(f"저장된 자본 복구: ${self.capital:.2f}")
             return
 
-        # 새로 시작: 바이낸스 잔고의 33% 사용 (BTC/ETH/여유분 3분할)
+        # 새로 시작: 바이낸스 잔고의 40% 사용
         try:
             balance = await self.binance.get_account_balance('USDC')
             wallet_balance = balance['wallet_balance']
 
-            # 총 잔고의 33%를 이 심볼의 운용 자본으로
-            self.capital = wallet_balance / 3
+            # 총 잔고의 40%를 이 심볼의 운용 자본으로
+            self.capital = wallet_balance * 0.4
 
-            self.logger.info(f"초기 자본 설정: 총 잔고 ${wallet_balance:.2f} / 3 = ${self.capital:.2f}")
+            self.logger.info(f"초기 자본 설정: 총 잔고 ${wallet_balance:.2f} × 40% = ${self.capital:.2f}")
 
         except Exception as e:
             self.logger.error(f"잔고 조회 실패: {e}")
-            # 실패 시 설정값의 33% 사용
-            self.capital = self._get_param('INITIAL_CAPITAL', 1000.0) / 3
+            # 실패 시 설정값의 40% 사용
+            self.capital = self._get_param('INITIAL_CAPITAL', 1000.0) * 0.4
             self.logger.warning(f"기본값 사용: ${self.capital:.2f}")
 
     async def update_capital_from_pnl(self):
