@@ -355,7 +355,7 @@ class GridMartingaleStrategy:
                     price=level_price,
                     base_value=entry_value,
                     leverage=leverage,
-                    retry_decrement_pct=0.01,
+                    retry_decrement_pct=0.001,  # 0.1%씩 줄이며 재시도
                     min_ratio=0.30
                 )
             else:
@@ -403,6 +403,10 @@ class GridMartingaleStrategy:
 
         # 2. 바이낸스 실제 포지션 동기화 (BE 체결 후 실제 남은 물량 확인)
         await self._sync_position_from_binance()
+
+        # 2.1. BE 후 남은 물량 = 새로운 Level 1 물량으로 업데이트
+        self.position.level1_btc_amount = self.position.total_size
+        self.logger.info(f"Level 1 물량 업데이트: {self.position.level1_btc_amount:.6f}")
 
         # 3. 바이낸스 대기 주문 수 확인
         try:
