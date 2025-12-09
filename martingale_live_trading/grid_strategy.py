@@ -138,31 +138,47 @@ class GridMartingaleStrategy:
         except Exception as e:
             self.logger.error(f"PnL 기반 자본 업데이트 실패: {e}")
 
-    async def _sync_position_from_binance(self):
+    async def _sync_position_from_binance(self, max_retries: int = 10, retry_delay: float = 1.0):
         """
         바이낸스 API에서 실제 포지션 정보를 가져와 평단가/수량 동기화
-        진입 체결 후 호출하여 정확한 평단가 사용
+        성공할 때까지 재시도
+
+        Args:
+            max_retries: 최대 재시도 횟수
+            retry_delay: 재시도 간격(초)
+
+        Returns:
+            성공 여부
         """
-        try:
-            pos_info = await self.binance.get_position_info()
+        for attempt in range(max_retries):
+            try:
+                pos_info = await self.binance.get_position_info()
 
-            if pos_info:
-                old_avg = self.position.avg_price
-                old_size = self.position.total_size
+                if pos_info:
+                    old_avg = self.position.avg_price
+                    old_size = self.position.total_size
 
-                # 바이낸스 실제 값으로 덮어쓰기
-                self.position.avg_price = pos_info['entry_price']
-                self.position.total_size = pos_info['size']
+                    # 바이낸스 실제 값으로 덮어쓰기
+                    self.position.avg_price = pos_info['entry_price']
+                    self.position.total_size = pos_info['size']
 
-                self.logger.info(
-                    f"포지션 동기화: 평단가 ${old_avg:.2f} → ${pos_info['entry_price']:.2f}, "
-                    f"수량 {old_size:.6f} → {pos_info['size']:.6f}"
-                )
-            else:
-                self.logger.warning("포지션 동기화 실패: 바이낸스에 포지션 없음")
+                    self.logger.info(
+                        f"포지션 동기화 성공: 평단가 ${old_avg:.2f} → ${pos_info['entry_price']:.2f}, "
+                        f"수량 {old_size:.6f} → {pos_info['size']:.6f}"
+                    )
+                    return True
+                else:
+                    # 포지션이 없는 경우 (청산 완료)
+                    self.logger.info("포지션 동기화: 바이낸스에 포지션 없음 (청산 완료)")
+                    return True
 
-        except Exception as e:
-            self.logger.error(f"포지션 동기화 에러: {e}")
+            except Exception as e:
+                self.logger.warning(f"포지션 동기화 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+
+        self.logger.error(f"포지션 동기화 실패: {max_retries}회 시도 후 포기")
+        return False
 
     # =========================================================================
     # 가격 계산
@@ -716,58 +732,73 @@ class GridMartingaleStrategy:
 
     async def on_tp_filled(self, price: float):
         """TP 체결 시 처리 (Level 1 전량 익절)"""
-        pnl = self._calculate_pnl(price)
+        self.logger.info(f"TP 체결 감지: ${price:.2f}")
 
+        # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
+        await self._sync_position_from_binance()
+
+        # 2. PnL 계산 (동기화된 값 기준)
+        pnl = self._calculate_pnl(price)
         self.logger.info(f"TP 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
 
-        # 거래 기록
+        # 3. 거래 기록
         self._record_trade('TP', self.position.current_level, price, self.position.total_size, pnl)
 
-        # 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
+        # 4. 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
         await self.update_capital_from_pnl()
 
-        # 그리드 재설정 (익절가가 새 center)
+        # 5. 그리드 재설정 (익절가가 새 center)
         await self.reset_grid_after_full_close(price)
 
     async def on_be_filled(self, price: float):
         """BE 체결 시 처리 (Level 2+ 덜어내기)"""
-        # 덜어낸 물량의 PnL
+        self.logger.info(f"BE 체결 감지: ${price:.2f}")
+
+        # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
+        await self._sync_position_from_binance()
+
+        # 2. 덜어낸 물량의 PnL 계산 (동기화된 값 기준)
         close_amount = self.position.total_size - self.position.level1_btc_amount
         if self.position.direction == 'LONG':
             pnl = (price - self.position.avg_price) * close_amount
         else:
             pnl = (self.position.avg_price - price) * close_amount
 
-        self.logger.info(f"BE 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
+        self.logger.info(f"BE 체결: ${price:.2f}, 덜어내기 수량: {close_amount:.6f}, 예상 PnL: ${pnl:.2f}")
 
-        # 거래 기록
+        # 3. 거래 기록
         self._record_trade('PARTIAL_BE', self.position.current_level, price, close_amount, pnl)
 
-        # 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
+        # 4. 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
         await self.update_capital_from_pnl()
 
-        # Level 1 물량만 남기고 그리드 재설정
+        # 5. Level 1 물량만 남기고 그리드 재설정
         self.position.total_size = self.position.level1_btc_amount
         self.position.entries = [{'price': self.position.avg_price, 'btc_amount': self.position.level1_btc_amount, 'level': 0}]
         self.position.current_level = 1
         self.position.level_prices = [self.position.avg_price, None, None, None]
 
-        # 새 그리드 설정
+        # 6. 새 그리드 설정
         await self.reset_grid_after_partial_close()
 
     async def on_sl_filled(self, price: float):
         """SL 체결 시 처리"""
-        pnl = self._calculate_pnl(price)
+        self.logger.info(f"SL 체결 감지: ${price:.2f}")
 
+        # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
+        await self._sync_position_from_binance()
+
+        # 2. PnL 계산 (동기화된 값 기준)
+        pnl = self._calculate_pnl(price)
         self.logger.info(f"SL 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
 
-        # 거래 기록
+        # 3. 거래 기록
         self._record_trade('SL', self.position.current_level, price, self.position.total_size, pnl)
 
-        # 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
+        # 4. 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
         await self.update_capital_from_pnl()
 
-        # 그리드 재설정 (손절가가 새 center)
+        # 5. 그리드 재설정 (손절가가 새 center)
         await self.reset_grid_after_full_close(price)
 
     def _calculate_pnl(self, exit_price: float) -> float:
@@ -802,9 +833,9 @@ class GridMartingaleStrategy:
             order_price = order['price']
 
             filled = False
-            if direction == 'LONG' and price <= order_price:
+            if direction == 'LONG' and price < order_price:
                 filled = True
-            elif direction == 'SHORT' and price >= order_price:
+            elif direction == 'SHORT' and price > order_price:
                 filled = True
 
             if filled:
@@ -813,25 +844,25 @@ class GridMartingaleStrategy:
         # 2. TP 체결 감지
         if self.orders.tp_order:
             tp_price = self.orders.tp_order['price']
-            if direction == 'LONG' and price >= tp_price:
+            if direction == 'LONG' and price > tp_price:
                 await self.on_tp_filled(tp_price)
-            elif direction == 'SHORT' and price <= tp_price:
+            elif direction == 'SHORT' and price < tp_price:
                 await self.on_tp_filled(tp_price)
 
         # 3. BE 체결 감지
         if self.orders.be_order:
             be_price = self.orders.be_order['price']
-            if direction == 'LONG' and price >= be_price:
+            if direction == 'LONG' and price > be_price:
                 await self.on_be_filled(be_price)
-            elif direction == 'SHORT' and price <= be_price:
+            elif direction == 'SHORT' and price < be_price:
                 await self.on_be_filled(be_price)
 
         # 4. SL 체결 감지
         if self.orders.sl_order:
             sl_price = self.orders.sl_order['price']
-            if direction == 'LONG' and price <= sl_price:
+            if direction == 'LONG' and price < sl_price:
                 await self.on_sl_filled(sl_price)
-            elif direction == 'SHORT' and price >= sl_price:
+            elif direction == 'SHORT' and price > sl_price:
                 await self.on_sl_filled(sl_price)
 
         # 5. 그리드 범위 이탈 체크 (포지션 없을 때만)
