@@ -34,52 +34,92 @@ SYMBOL = Config.get_symbol(SYMBOL_TYPE)  # 'BTCUSDC'
 # 로깅 설정
 # =============================================================================
 
-class DailyLogHandler:
-    """일별 로그 파일 관리"""
+class DailyRotatingLogger:
+    """
+    일별 로그 파일 자동 교체 로거
+
+    매 로그 출력 시 날짜를 체크하여 자동으로 새 파일 생성
+    """
 
     def __init__(self, prefix: str, logs_dir: str = 'logs'):
         self.prefix = prefix
         self.logs_dir = logs_dir
         self.current_date = None
-        self.logger = None
+        self.file_handler = None
+        self._logger = logging.getLogger(f'{prefix}_daily')
+        self._logger.setLevel(logging.INFO)
+        self._logger.propagate = False  # 중복 로깅 방지
         os.makedirs(logs_dir, exist_ok=True)
-        self.setup_logger()
 
-    def setup_logger(self):
-        """로거 설정"""
+        # 콘솔 핸들러 (한 번만 추가)
+        if not any(isinstance(h, logging.StreamHandler) for h in self._logger.handlers):
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            )
+            self._logger.addHandler(console_handler)
+
+        self._update_file_handler()
+
+    def _update_file_handler(self):
+        """날짜 변경 시 파일 핸들러 교체"""
         today = datetime.now(pytz.UTC).strftime('%Y-%m-%d')
 
         if today != self.current_date:
             self.current_date = today
             log_filename = f'{self.logs_dir}/{self.prefix}_{today}.log'
 
-            if self.logger:
-                for handler in self.logger.handlers[:]:
-                    handler.close()
-                    self.logger.removeHandler(handler)
+            # 기존 파일 핸들러 제거
+            if self.file_handler:
+                self._logger.removeHandler(self.file_handler)
+                self.file_handler.close()
 
-            self.logger = logging.getLogger(f'{self.prefix}_{today}')
-            self.logger.setLevel(logging.INFO)
-            self.logger.handlers.clear()
-
-            # 파일 핸들러
-            file_handler = logging.FileHandler(log_filename)
-            file_handler.setFormatter(
+            # 새 파일 핸들러 추가
+            self.file_handler = logging.FileHandler(log_filename)
+            self.file_handler.setFormatter(
                 logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             )
-            self.logger.addHandler(file_handler)
+            self._logger.addHandler(self.file_handler)
 
-            # 콘솔 핸들러
-            console_handler = logging.StreamHandler()
-            console_handler.setFormatter(
-                logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            )
-            self.logger.addHandler(console_handler)
+            self._logger.info(f"=== 로그 파일 시작: {log_filename} ===")
 
-    def get_logger(self) -> logging.Logger:
+    def _check_date(self):
+        """날짜 체크 후 필요 시 핸들러 교체"""
+        today = datetime.now(pytz.UTC).strftime('%Y-%m-%d')
+        if today != self.current_date:
+            self._update_file_handler()
+
+    def info(self, msg, *args, **kwargs):
+        self._check_date()
+        self._logger.info(msg, *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs):
+        self._check_date()
+        self._logger.warning(msg, *args, **kwargs)
+
+    def error(self, msg, *args, **kwargs):
+        self._check_date()
+        self._logger.error(msg, *args, **kwargs)
+
+    def debug(self, msg, *args, **kwargs):
+        self._check_date()
+        self._logger.debug(msg, *args, **kwargs)
+
+    def exception(self, msg, *args, **kwargs):
+        self._check_date()
+        self._logger.exception(msg, *args, **kwargs)
+
+
+# 하위 호환성을 위한 래퍼
+class DailyLogHandler:
+    """일별 로그 파일 관리 (하위 호환성)"""
+
+    def __init__(self, prefix: str, logs_dir: str = 'logs'):
+        self.daily_logger = DailyRotatingLogger(prefix, logs_dir)
+
+    def get_logger(self) -> DailyRotatingLogger:
         """로거 반환"""
-        self.setup_logger()
-        return self.logger
+        return self.daily_logger
 
 
 # 전역 로그 핸들러
