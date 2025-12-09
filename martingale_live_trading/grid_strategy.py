@@ -296,13 +296,78 @@ class GridMartingaleStrategy:
                     f"포지션 동기화: 평단가 ${old_avg:.2f} → ${pos_info['entry_price']:.2f}, "
                     f"수량 {old_size:.6f} → {pos_info['size']:.6f}"
                 )
+        else:
+            # 바이낸스에 포지션이 없는데 로컬에 있으면 초기화
+            if self.position.has_position():
+                self.logger.warning("바이낸스에 포지션 없음 - 로컬 포지션 초기화")
+                self.position.reset()
 
-                # 동기화 후 상태 저장
-                self._save_state()
-
-        # 대기 주문 확인
+        # 대기 주문 확인 및 동기화
         open_orders = await self.binance.get_open_orders()
         self.logger.info(f"바이낸스 대기 주문: {len(open_orders)}개")
+
+        # 주문 동기화: 바이낸스 실제 주문과 로컬 상태 매칭
+        await self._sync_orders_with_binance(open_orders)
+
+        # 동기화 후 상태 저장
+        self._save_state()
+
+    async def _sync_orders_with_binance(self, open_orders: List[Dict]):
+        """
+        바이낸스 실제 주문과 로컬 상태 동기화
+
+        로컬에 저장된 주문 ID가 바이낸스에 없으면 제거하고,
+        필요한 주문이 없으면 새로 설정
+        """
+        # 바이낸스에 있는 주문 ID 집합
+        binance_order_ids = {str(o.get('orderId', '')) for o in open_orders}
+
+        self.logger.info(f"주문 동기화 시작: 바이낸스 주문 {len(open_orders)}개")
+
+        # 1. 진입 주문 동기화
+        valid_entry_orders = []
+        for order in self.orders.pending_entry_orders:
+            if order['order_id'] in binance_order_ids:
+                valid_entry_orders.append(order)
+            else:
+                self.logger.warning(f"진입 주문 {order['order_id']} (Level {order['level']+1})가 바이낸스에 없음 - 제거")
+        self.orders.pending_entry_orders = valid_entry_orders
+
+        # 2. TP 주문 동기화
+        if self.orders.tp_order:
+            if self.orders.tp_order['order_id'] not in binance_order_ids:
+                self.logger.warning(f"TP 주문 {self.orders.tp_order['order_id']}가 바이낸스에 없음 - 제거")
+                self.orders.tp_order = None
+
+        # 3. BE 주문 동기화
+        if self.orders.be_order:
+            if self.orders.be_order['order_id'] not in binance_order_ids:
+                self.logger.warning(f"BE 주문 {self.orders.be_order['order_id']}가 바이낸스에 없음 - 제거")
+                self.orders.be_order = None
+
+        # 4. SL 주문 동기화
+        if self.orders.sl_order:
+            if self.orders.sl_order['order_id'] not in binance_order_ids:
+                self.logger.warning(f"SL 주문 {self.orders.sl_order['order_id']}가 바이낸스에 없음 - 제거")
+                self.orders.sl_order = None
+
+        # 5. 포지션이 있는데 청산 주문이 없으면 새로 설정
+        if self.position.has_position():
+            if self.position.current_level == 1 and not self.orders.tp_order:
+                self.logger.info("TP 주문 누락 - 새로 설정")
+                await self._set_tp_order()
+            elif self.position.current_level >= 2 and not self.orders.be_order:
+                self.logger.info("BE 주문 누락 - 새로 설정")
+                await self._set_be_order()
+            if self.position.current_level >= 4 and not self.orders.sl_order:
+                self.logger.info("SL 주문 누락 - 새로 설정")
+                await self._set_sl_order()
+
+        # 6. 포지션이 없고 진입 주문도 없으면 그리드 재설정
+        if not self.position.has_position() and len(self.orders.pending_entry_orders) == 0:
+            if self.grid_center:
+                self.logger.info("포지션/진입주문 없음 - 그리드 재설정")
+                await self.setup_grid_orders(self.grid_center)
 
     # =========================================================================
     # 상태 저장
