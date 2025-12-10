@@ -285,7 +285,8 @@ async def main():
     tasks = [
         asyncio.create_task(websocket_handler(strategy)),
         asyncio.create_task(position_sync_task(strategy, interval=30)),
-        asyncio.create_task(config_reload_task(strategy, interval=60))
+        asyncio.create_task(config_reload_task(strategy, interval=60)),
+        asyncio.create_task(strategy.order_verify_worker())  # 주문 검증 워커
     ]
 
     logger.info("모든 태스크 시작 완료")

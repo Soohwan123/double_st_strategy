@@ -68,6 +68,9 @@ class GridMartingaleStrategy:
         self.trades_path = Config.get_trades_path(symbol_type)
         os.makedirs(os.path.dirname(self.trades_path), exist_ok=True)
 
+        # 주문 검증 큐 (이벤트 기반 주문 재시도)
+        self.order_verify_queue: asyncio.Queue = asyncio.Queue()
+
     # =========================================================================
     # 설정값 접근
     # =========================================================================
@@ -459,6 +462,9 @@ class GridMartingaleStrategy:
         # 상태 저장
         self._save_state()
 
+        # 주문 검증 트리거
+        await self.trigger_order_verify('GRID')
+
     async def reset_grid_after_full_close(self, new_center: float):
         """전량 청산(TP/SL) 후 그리드 재설정"""
         self.logger.info(f"그리드 재설정: new_center=${new_center:.2f}")
@@ -600,6 +606,9 @@ class GridMartingaleStrategy:
             )
             self.logger.info(f"TP 주문 설정: ${tp_price:.2f}, 수량: {actual_size:.6f}")
 
+            # 주문 검증 트리거
+            await self.trigger_order_verify('TP')
+
     async def _set_be_order(self):
         """본절(BE) 주문 설정 - Level 2+ 체결된 상태, 바이낸스 실제 포지션에서 Level 1 제외"""
         if not self.position.has_position():
@@ -639,6 +648,9 @@ class GridMartingaleStrategy:
             )
             self.logger.info(f"BE 주문 설정: ${be_price:.2f}, 덜어내기 수량: {close_amount:.6f} (Level1 {self.position.level1_btc_amount:.6f} 유지)")
 
+            # 주문 검증 트리거
+            await self.trigger_order_verify('BE')
+
     async def _set_sl_order(self):
         """손절(SL) 주문 설정 - Level 4 체결 후"""
         if not self.position.has_position():
@@ -657,6 +669,9 @@ class GridMartingaleStrategy:
                 price=sl_price
             )
             self.logger.info(f"SL 주문 설정: ${sl_price:.2f}")
+
+            # 주문 검증 트리거
+            await self.trigger_order_verify('SL')
 
     async def _update_close_orders(self):
         """
@@ -960,3 +975,167 @@ class GridMartingaleStrategy:
 
         except Exception as e:
             self.logger.error(f"거래 기록 저장 실패: {e}")
+
+    # =========================================================================
+    # 주문 검증 시스템 (이벤트 기반)
+    # =========================================================================
+
+    async def trigger_order_verify(self, order_type: str, expected_orders: List[Dict] = None):
+        """
+        주문 검증 트리거 - 큐에 검증 요청 추가
+
+        Args:
+            order_type: 'GRID', 'TP', 'BE', 'SL'
+            expected_orders: 나갔어야 할 주문 목록 (GRID의 경우 레벨별 주문)
+        """
+        await self.order_verify_queue.put({
+            'type': order_type,
+            'expected_orders': expected_orders or [],
+            'retry_count': 0
+        })
+
+    async def order_verify_worker(self):
+        """
+        주문 검증 워커 - 큐에서 요청을 받아 처리
+        누락된 주문을 성공할 때까지 재시도
+        """
+        while True:
+            try:
+                # 큐에서 검증 요청 대기
+                request = await self.order_verify_queue.get()
+
+                order_type = request['type']
+                retry_count = request['retry_count']
+                max_retries = 10
+
+                if retry_count >= max_retries:
+                    self.logger.error(f"주문 검증 실패: {order_type} - {max_retries}회 재시도 후 포기")
+                    continue
+
+                # 잠시 대기 후 검증 (주문이 바이낸스에 반영될 시간)
+                await asyncio.sleep(1.0)
+
+                # 바이낸스 실제 주문 조회
+                open_orders = await self.binance.get_open_orders()
+                binance_order_ids = {str(o.get('orderId', '')) for o in open_orders}
+
+                if order_type == 'GRID':
+                    await self._verify_grid_orders(binance_order_ids, request)
+                elif order_type == 'TP':
+                    await self._verify_tp_order(binance_order_ids, request)
+                elif order_type == 'BE':
+                    await self._verify_be_order(binance_order_ids, request)
+                elif order_type == 'SL':
+                    await self._verify_sl_order(binance_order_ids, request)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"주문 검증 워커 에러: {e}")
+                await asyncio.sleep(1.0)
+
+    async def _verify_grid_orders(self, binance_order_ids: set, request: Dict):
+        """거미줄 진입 주문 검증 및 재발행"""
+        missing_levels = []
+
+        for order in self.orders.pending_entry_orders:
+            if order['order_id'] not in binance_order_ids:
+                missing_levels.append(order)
+
+        if not missing_levels:
+            self.logger.info("거미줄 주문 검증 완료: 모든 주문 정상")
+            return
+
+        self.logger.warning(f"거미줄 주문 누락 {len(missing_levels)}개 발견 - 재발행 시도")
+
+        direction = self._get_param('TRADE_DIRECTION', 'LONG')
+        leverage = self._get_param('LEVERAGE_LONG', 20) if direction == 'LONG' else self._get_param('LEVERAGE_SHORT', 5)
+        success_count = 0
+
+        for order in missing_levels:
+            level = order['level']
+            level_price = self.get_level_price(level, direction)
+            quantity = order['quantity']
+
+            try:
+                new_order = await self.binance.place_limit_entry(
+                    direction=direction,
+                    price=level_price,
+                    quantity=quantity,
+                    leverage=leverage
+                )
+
+                if new_order:
+                    order['order_id'] = str(new_order.get('orderId', ''))
+                    order['price'] = level_price
+                    self.logger.info(f"Level {level+1} 주문 재발행 성공: ${level_price:.2f}, ID: {order['order_id']}")
+                    success_count += 1
+                else:
+                    self.logger.warning(f"Level {level+1} 주문 재발행 실패")
+
+            except Exception as e:
+                self.logger.error(f"Level {level+1} 주문 재발행 에러: {e}")
+
+        # 아직 누락된 주문이 있으면 다시 큐에 넣기
+        if success_count < len(missing_levels):
+            request['retry_count'] += 1
+            await self.order_verify_queue.put(request)
+        else:
+            self._save_state()
+
+    async def _verify_tp_order(self, binance_order_ids: set, request: Dict):
+        """TP 주문 검증 및 재발행"""
+        if not self.orders.tp_order:
+            return
+
+        if self.orders.tp_order['order_id'] in binance_order_ids:
+            self.logger.info("TP 주문 검증 완료: 정상")
+            return
+
+        self.logger.warning("TP 주문 누락 - 재발행 시도")
+
+        try:
+            await self._set_tp_order()
+            self.logger.info("TP 주문 재발행 성공")
+        except Exception as e:
+            self.logger.error(f"TP 주문 재발행 에러: {e}")
+            request['retry_count'] += 1
+            await self.order_verify_queue.put(request)
+
+    async def _verify_be_order(self, binance_order_ids: set, request: Dict):
+        """BE 주문 검증 및 재발행"""
+        if not self.orders.be_order:
+            return
+
+        if self.orders.be_order['order_id'] in binance_order_ids:
+            self.logger.info("BE 주문 검증 완료: 정상")
+            return
+
+        self.logger.warning("BE 주문 누락 - 재발행 시도")
+
+        try:
+            await self._set_be_order()
+            self.logger.info("BE 주문 재발행 성공")
+        except Exception as e:
+            self.logger.error(f"BE 주문 재발행 에러: {e}")
+            request['retry_count'] += 1
+            await self.order_verify_queue.put(request)
+
+    async def _verify_sl_order(self, binance_order_ids: set, request: Dict):
+        """SL 주문 검증 및 재발행"""
+        if not self.orders.sl_order:
+            return
+
+        if self.orders.sl_order['order_id'] in binance_order_ids:
+            self.logger.info("SL 주문 검증 완료: 정상")
+            return
+
+        self.logger.warning("SL 주문 누락 - 재발행 시도")
+
+        try:
+            await self._set_sl_order()
+            self.logger.info("SL 주문 재발행 성공")
+        except Exception as e:
+            self.logger.error(f"SL 주문 재발행 에러: {e}")
+            request['retry_count'] += 1
+            await self.order_verify_queue.put(request)
