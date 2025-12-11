@@ -809,3 +809,45 @@ class BinanceFuturesClient:
         except BinanceAPIException as e:
             self.logger.error(f"마지막 청산 PnL 조회 실패: {e}")
             return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+
+    async def get_order_pnl(self, order_id: int) -> Dict[str, float]:
+        """
+        특정 주문번호의 PnL 조회
+
+        Args:
+            order_id: 조회할 주문 ID
+
+        Returns:
+            {'realized_pnl': float, 'commission': float, 'net_pnl': float}
+        """
+        try:
+            trades = self.client.futures_account_trades(
+                symbol=self.symbol,
+                limit=100
+            )
+
+            # 해당 주문번호의 trade들 필터링 (한 주문이 여러 체결로 나뉠 수 있음)
+            order_trades = [t for t in trades if t.get('orderId') == order_id]
+
+            if not order_trades:
+                self.logger.warning(f"주문 {order_id}의 체결 내역을 찾을 수 없음")
+                return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+
+            # 모든 체결의 PnL 합산
+            total_pnl = sum(float(t.get('realizedPnl', 0)) for t in order_trades)
+            total_commission = sum(float(t.get('commission', 0)) for t in order_trades)
+            net_pnl = total_pnl - total_commission
+
+            self.logger.info(
+                f"주문 {order_id} PnL: pnl=${total_pnl:.4f}, 수수료=${total_commission:.4f}, 순익=${net_pnl:.4f}"
+            )
+
+            return {
+                'realized_pnl': total_pnl,
+                'commission': total_commission,
+                'net_pnl': net_pnl
+            }
+
+        except BinanceAPIException as e:
+            self.logger.error(f"주문 PnL 조회 실패: {e}")
+            return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}

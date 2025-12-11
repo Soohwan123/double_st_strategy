@@ -120,12 +120,19 @@ class GridMartingaleStrategy:
             self.capital = self._get_param('INITIAL_CAPITAL', 1000.0) * 0.4
             self.logger.warning(f"기본값 사용: ${self.capital:.2f}")
 
-    async def update_capital_from_pnl(self):
+    async def update_capital_from_pnl(self, order_id: int = None):
         """
         청산 후 바이낸스 API에서 realizedPnl 조회하여 capital 업데이트
+
+        Args:
+            order_id: 특정 주문번호로 PnL 조회 (None이면 마지막 청산 거래 조회)
         """
         try:
-            pnl_data = await self.binance.get_last_closed_trade_pnl()
+            if order_id:
+                pnl_data = await self.binance.get_order_pnl(order_id)
+            else:
+                pnl_data = await self.binance.get_last_closed_trade_pnl()
+
             net_pnl = pnl_data['net_pnl']
 
             old_capital = self.capital
@@ -749,6 +756,9 @@ class GridMartingaleStrategy:
         """TP 체결 시 처리 (Level 1 전량 익절)"""
         self.logger.info(f"TP 체결 감지: ${price:.2f}")
 
+        # 체결된 주문번호 저장 (PnL 조회용)
+        tp_order_id = self.orders.tp_order['order_id'] if self.orders.tp_order else None
+
         # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
         await self._sync_position_from_binance()
 
@@ -759,8 +769,8 @@ class GridMartingaleStrategy:
         # 3. 거래 기록
         self._record_trade('TP', self.position.current_level, price, self.position.total_size, pnl)
 
-        # 4. 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
-        await self.update_capital_from_pnl()
+        # 4. 바이낸스 API에서 주문번호로 실제 PnL 조회하여 자본 업데이트
+        await self.update_capital_from_pnl(tp_order_id)
 
         # 5. 그리드 재설정 (익절가가 새 center)
         await self.reset_grid_after_full_close(price)
@@ -768,6 +778,9 @@ class GridMartingaleStrategy:
     async def on_be_filled(self, price: float):
         """BE 체결 시 처리 (Level 2+ 덜어내기)"""
         self.logger.info(f"BE 체결 감지: ${price:.2f}")
+
+        # 체결된 주문번호 저장 (PnL 조회용)
+        be_order_id = self.orders.be_order['order_id'] if self.orders.be_order else None
 
         # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
         await self._sync_position_from_binance()
@@ -784,8 +797,8 @@ class GridMartingaleStrategy:
         # 3. 거래 기록
         self._record_trade('PARTIAL_BE', self.position.current_level, price, close_amount, pnl)
 
-        # 4. 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
-        await self.update_capital_from_pnl()
+        # 4. 바이낸스 API에서 주문번호로 실제 PnL 조회하여 자본 업데이트
+        await self.update_capital_from_pnl(be_order_id)
 
         # 5. Level 1 물량만 남기고 그리드 재설정
         self.position.total_size = self.position.level1_btc_amount
@@ -800,6 +813,9 @@ class GridMartingaleStrategy:
         """SL 체결 시 처리"""
         self.logger.info(f"SL 체결 감지: ${price:.2f}")
 
+        # 체결된 주문번호 저장 (PnL 조회용)
+        sl_order_id = self.orders.sl_order['order_id'] if self.orders.sl_order else None
+
         # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
         await self._sync_position_from_binance()
 
@@ -810,8 +826,8 @@ class GridMartingaleStrategy:
         # 3. 거래 기록
         self._record_trade('SL', self.position.current_level, price, self.position.total_size, pnl)
 
-        # 4. 바이낸스 API에서 실제 PnL 조회하여 자본 업데이트
-        await self.update_capital_from_pnl()
+        # 4. 바이낸스 API에서 주문번호로 실제 PnL 조회하여 자본 업데이트
+        await self.update_capital_from_pnl(sl_order_id)
 
         # 5. 그리드 재설정 (손절가가 새 center)
         await self.reset_grid_after_full_close(price)
