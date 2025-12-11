@@ -462,7 +462,10 @@ class BinanceFuturesClient:
         quantity: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """
-        손절 주문 설정 (STOP_MARKET)
+        손절 주문 설정 (STOP_MARKET via Algo Order API)
+
+        2025-12-09부터 바이낸스는 조건부 주문을 Algo Order API로 이전
+        POST /fapi/v1/algoOrder 사용
 
         Args:
             direction: 포지션 방향 ('LONG' 또는 'SHORT')
@@ -480,16 +483,23 @@ class BinanceFuturesClient:
             return {'orderId': 'DRY_RUN_SL', 'status': 'DRY_RUN'}
 
         try:
-            order_params = {
+            # Algo Order API 파라미터
+            params = {
                 'symbol': self.symbol,
                 'side': side,
                 'type': 'STOP_MARKET',
-                'stopPrice': stop_price,
-                'closePosition': True  # 전체 포지션 청산
+                'triggerPrice': str(stop_price),
+                'closePosition': 'true',
+                'algoType': 'CONDITIONAL'
             }
 
-            order = self.client.futures_create_order(**order_params)
-            self.logger.info(f"STOP_MARKET 주문: ${stop_price}, ID: {order['orderId']}")
+            # Algo Order API 호출 (POST /fapi/v1/algoOrder)
+            order = self.client._request_futures_api('post', 'algoOrder', signed=True, data=params)
+            algo_id = order.get('algoId', 'N/A')
+            self.logger.info(f"STOP_MARKET 주문 (Algo): ${stop_price}, AlgoID: {algo_id}")
+
+            # 기존 코드와 호환성을 위해 orderId 필드 추가
+            order['orderId'] = algo_id
             return order
 
         except BinanceAPIException as e:
