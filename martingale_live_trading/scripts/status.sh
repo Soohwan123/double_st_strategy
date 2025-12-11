@@ -80,4 +80,21 @@ else
 fi
 
 echo ""
+
+# Monitor Alert 상태
+MONITOR_PID_FILE="$PROJECT_DIR/state/monitor.pid"
+echo "[ Monitor Alert ]"
+if [ -f "$MONITOR_PID_FILE" ]; then
+    MONITOR_PID=$(cat "$MONITOR_PID_FILE")
+    if ps -p "$MONITOR_PID" > /dev/null 2>&1; then
+        echo "  상태: 실행 중 (PID: $MONITOR_PID)"
+        ps -p "$MONITOR_PID" -o %cpu,%mem,etime --no-headers | awk '{printf "  CPU: %s%%, MEM: %s%%, 실행시간: %s\n", $1, $2, $3}'
+    else
+        echo "  상태: 중지됨 (stale PID file)"
+    fi
+else
+    echo "  상태: 중지됨"
+fi
+
+echo ""
 echo "========================================"

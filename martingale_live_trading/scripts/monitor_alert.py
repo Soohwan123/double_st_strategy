@@ -14,18 +14,15 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
-import httpx
-from dotenv import load_dotenv
 
 # 경로 설정
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
 STATE_DIR = PROJECT_DIR / 'state'
-
-# 환경변수 로드
-load_dotenv(PROJECT_DIR / '.env')
 
 # 텔레그램 설정
 TELEGRAM_BOT_TOKEN = '8084981809:AAF1MV_omet1l2PeK8KObpS5qyuZe_og3bg'
@@ -39,23 +36,25 @@ ALERT_COOLDOWN = 300  # 같은 알림 재발송 방지 (초)
 last_alerts = {}
 
 
-async def send_telegram(message: str):
-    """텔레그램 메시지 전송"""
+def send_telegram(message: str):
+    """텔레그램 메시지 전송 (동기)"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, data={
-                'chat_id': TELEGRAM_CHAT_ID,
-                'text': message,
-                'parse_mode': 'HTML'
-            })
-            if response.status_code == 200:
+    try:
+        data = urllib.parse.urlencode({
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message,
+            'parse_mode': 'HTML'
+        }).encode('utf-8')
+
+        req = urllib.request.Request(url, data=data, method='POST')
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status == 200:
                 print(f"[{datetime.now()}] 텔레그램 전송 성공")
             else:
-                print(f"[{datetime.now()}] 텔레그램 전송 실패: {response.text}")
-        except Exception as e:
-            print(f"[{datetime.now()}] 텔레그램 전송 에러: {e}")
+                print(f"[{datetime.now()}] 텔레그램 전송 실패: {response.status}")
+    except Exception as e:
+        print(f"[{datetime.now()}] 텔레그램 전송 에러: {e}")
 
 
 def should_alert(alert_key: str) -> bool:
@@ -139,7 +138,7 @@ async def monitor_loop():
     print("-" * 50)
 
     # 시작 알림
-    await send_telegram("🟢 <b>Grid Martingale 모니터링 시작</b>\n\n감지 항목:\n• 포지션 있는데 TP/BE 주문 없음\n• 프로세스 OFF 상태")
+    send_telegram("🟢 <b>Grid Martingale 모니터링 시작</b>\n\n감지 항목:\n• 포지션 있는데 TP/BE 주문 없음\n• 프로세스 OFF 상태")
 
     while True:
         try:
@@ -178,7 +177,7 @@ async def monitor_loop():
 
             # 알림 전송
             for alert in alerts:
-                await send_telegram(alert)
+                send_telegram(alert)
 
             # 상태 로그
             status = f"BTC: {'🟢' if btc_running else '🔴'} | ETH: {'🟢' if eth_running else '🔴'}"
@@ -190,14 +189,14 @@ async def monitor_loop():
         await asyncio.sleep(CHECK_INTERVAL)
 
 
-async def main():
+def main():
     """메인 함수"""
     try:
-        await monitor_loop()
+        asyncio.run(monitor_loop())
     except KeyboardInterrupt:
         print("\n모니터링 종료")
-        await send_telegram("🔴 <b>Grid Martingale 모니터링 종료</b>")
+        send_telegram("🔴 <b>Grid Martingale 모니터링 종료</b>")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
