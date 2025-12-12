@@ -810,24 +810,30 @@ class BinanceFuturesClient:
             self.logger.error(f"마지막 청산 PnL 조회 실패: {e}")
             return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
 
-    async def get_order_pnl(self, order_id: int) -> Dict[str, float]:
+    async def get_order_pnl(self, order_id) -> Dict[str, float]:
         """
         특정 주문번호의 PnL 조회
 
         Args:
-            order_id: 조회할 주문 ID
+            order_id: 조회할 주문 ID (int 또는 str)
 
         Returns:
             {'realized_pnl': float, 'commission': float, 'net_pnl': float}
         """
         try:
+            # order_id를 정수로 변환 (문자열일 수 있음)
+            order_id_int = int(order_id) if order_id else None
+            if not order_id_int:
+                self.logger.warning("유효하지 않은 주문번호")
+                return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+
             trades = self.client.futures_account_trades(
                 symbol=self.symbol,
                 limit=100
             )
 
             # 해당 주문번호의 trade들 필터링 (한 주문이 여러 체결로 나뉠 수 있음)
-            order_trades = [t for t in trades if t.get('orderId') == order_id]
+            order_trades = [t for t in trades if t.get('orderId') == order_id_int]
 
             if not order_trades:
                 self.logger.warning(f"주문 {order_id}의 체결 내역을 찾을 수 없음")
