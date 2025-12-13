@@ -120,20 +120,32 @@ class GridMartingaleStrategy:
             self.capital = self._get_param('INITIAL_CAPITAL', 1000.0) * 0.4
             self.logger.warning(f"기본값 사용: ${self.capital:.2f}")
 
-    async def update_capital_from_pnl(self, order_id: int = None):
+    async def update_capital_from_pnl(self, order_id: int = None, fallback_pnl: float = None):
         """
         청산 후 바이낸스 API에서 realizedPnl 조회하여 capital 업데이트
 
         Args:
             order_id: 특정 주문번호로 PnL 조회 (None이면 마지막 청산 거래 조회)
+            fallback_pnl: 체결 내역을 못 찾을 경우 사용할 예상 PnL
         """
         try:
+            pnl_data = None
             if order_id:
                 pnl_data = await self.binance.get_order_pnl(order_id)
-            else:
+
+            if pnl_data is None and order_id is None:
                 pnl_data = await self.binance.get_last_closed_trade_pnl()
 
-            net_pnl = pnl_data['net_pnl']
+            # 체결 내역을 찾지 못한 경우 fallback_pnl 사용
+            if pnl_data is None:
+                if fallback_pnl is not None:
+                    net_pnl = fallback_pnl
+                    self.logger.warning(f"체결 내역 없음, 예상 PnL 사용: ${fallback_pnl:.4f}")
+                else:
+                    self.logger.warning("체결 내역 없음, PnL 업데이트 건너뜀")
+                    return
+            else:
+                net_pnl = pnl_data['net_pnl']
 
             old_capital = self.capital
             self.capital += net_pnl
@@ -759,18 +771,21 @@ class GridMartingaleStrategy:
         # 체결된 주문번호 저장 (PnL 조회용)
         tp_order_id = self.orders.tp_order['order_id'] if self.orders.tp_order else None
 
-        # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
+        # 1. 동기화 전에 PnL 계산 (동기화 후 포지션이 없어지므로)
+        expected_pnl = self._calculate_pnl(price)
+        close_size = self.position.total_size
+        close_level = self.position.current_level
+        self.logger.info(f"TP 체결: ${price:.2f}, 예상 PnL: ${expected_pnl:.2f}")
+
+        # 2. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
         await self._sync_position_from_binance()
 
-        # 2. PnL 계산 (동기화된 값 기준)
-        pnl = self._calculate_pnl(price)
-        self.logger.info(f"TP 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
-
         # 3. 거래 기록
-        self._record_trade('TP', self.position.current_level, price, self.position.total_size, pnl)
+        self._record_trade('TP', close_level, price, close_size, expected_pnl)
 
         # 4. 바이낸스 API에서 주문번호로 실제 PnL 조회하여 자본 업데이트
-        await self.update_capital_from_pnl(tp_order_id)
+        # 못 찾으면 예상 PnL 사용
+        await self.update_capital_from_pnl(tp_order_id, fallback_pnl=expected_pnl)
 
         # 5. 그리드 재설정 (익절가가 새 center)
         await self.reset_grid_after_full_close(price)
@@ -782,23 +797,24 @@ class GridMartingaleStrategy:
         # 체결된 주문번호 저장 (PnL 조회용)
         be_order_id = self.orders.be_order['order_id'] if self.orders.be_order else None
 
-        # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
-        await self._sync_position_from_binance()
-
-        # 2. 덜어낸 물량의 PnL 계산 (동기화된 값 기준)
+        # 1. 동기화 전에 덜어낸 물량 및 PnL 계산 (동기화하면 이미 덜어낸 상태가 됨)
         close_amount = self.position.total_size - self.position.level1_btc_amount
         if self.position.direction == 'LONG':
-            pnl = (price - self.position.avg_price) * close_amount
+            expected_pnl = (price - self.position.avg_price) * close_amount
         else:
-            pnl = (self.position.avg_price - price) * close_amount
+            expected_pnl = (self.position.avg_price - price) * close_amount
 
-        self.logger.info(f"BE 체결: ${price:.2f}, 덜어내기 수량: {close_amount:.6f}, 예상 PnL: ${pnl:.2f}")
+        self.logger.info(f"BE 체결: ${price:.2f}, 덜어내기 수량: {close_amount:.6f}, 예상 PnL: ${expected_pnl:.2f}")
+
+        # 2. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
+        await self._sync_position_from_binance()
 
         # 3. 거래 기록
-        self._record_trade('PARTIAL_BE', self.position.current_level, price, close_amount, pnl)
+        self._record_trade('PARTIAL_BE', self.position.current_level, price, close_amount, expected_pnl)
 
         # 4. 바이낸스 API에서 주문번호로 실제 PnL 조회하여 자본 업데이트
-        await self.update_capital_from_pnl(be_order_id)
+        # 못 찾으면 예상 PnL 사용
+        await self.update_capital_from_pnl(be_order_id, fallback_pnl=expected_pnl)
 
         # 5. Level 1 물량만 남기고 그리드 재설정
         self.position.total_size = self.position.level1_btc_amount
@@ -816,18 +832,21 @@ class GridMartingaleStrategy:
         # 체결된 주문번호 저장 (PnL 조회용)
         sl_order_id = self.orders.sl_order['order_id'] if self.orders.sl_order else None
 
-        # 1. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
+        # 1. 동기화 전에 PnL 계산 (동기화 후 포지션이 없어지므로)
+        expected_pnl = self._calculate_pnl(price)
+        close_size = self.position.total_size
+        close_level = self.position.current_level
+        self.logger.info(f"SL 체결: ${price:.2f}, 예상 PnL: ${expected_pnl:.2f}")
+
+        # 2. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
         await self._sync_position_from_binance()
 
-        # 2. PnL 계산 (동기화된 값 기준)
-        pnl = self._calculate_pnl(price)
-        self.logger.info(f"SL 체결: ${price:.2f}, 예상 PnL: ${pnl:.2f}")
-
         # 3. 거래 기록
-        self._record_trade('SL', self.position.current_level, price, self.position.total_size, pnl)
+        self._record_trade('SL', close_level, price, close_size, expected_pnl)
 
         # 4. 바이낸스 API에서 주문번호로 실제 PnL 조회하여 자본 업데이트
-        await self.update_capital_from_pnl(sl_order_id)
+        # 못 찾으면 예상 PnL 사용
+        await self.update_capital_from_pnl(sl_order_id, fallback_pnl=expected_pnl)
 
         # 5. 그리드 재설정 (손절가가 새 center)
         await self.reset_grid_after_full_close(price)

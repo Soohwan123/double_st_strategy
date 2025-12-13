@@ -827,17 +827,30 @@ class BinanceFuturesClient:
                 self.logger.warning("유효하지 않은 주문번호")
                 return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
 
-            trades = self.client.futures_account_trades(
-                symbol=self.symbol,
-                limit=100
-            )
+            # 바이낸스 서버 동기화 지연 대비: 2초 동안 0.1초 간격으로 재시도
+            import asyncio
+            max_retries = 20  # 0.1초 * 20 = 2초
+            order_trades = []
 
-            # 해당 주문번호의 trade들 필터링 (한 주문이 여러 체결로 나뉠 수 있음)
-            order_trades = [t for t in trades if t.get('orderId') == order_id_int]
+            for attempt in range(max_retries):
+                trades = self.client.futures_account_trades(
+                    symbol=self.symbol,
+                    limit=100
+                )
+
+                # 해당 주문번호의 trade들 필터링 (한 주문이 여러 체결로 나뉠 수 있음)
+                order_trades = [t for t in trades if t.get('orderId') == order_id_int]
+
+                if order_trades:
+                    break  # 찾으면 종료
+
+                # 못 찾으면 0.1초 대기 후 재시도
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.1)
 
             if not order_trades:
-                self.logger.warning(f"주문 {order_id}의 체결 내역을 찾을 수 없음")
-                return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
+                self.logger.warning(f"주문 {order_id}의 체결 내역을 찾을 수 없음 (2초간 재시도 실패)")
+                return None  # None 반환으로 변경 (fallback 처리 가능)
 
             # 모든 체결의 PnL 합산
             total_pnl = sum(float(t.get('realizedPnl', 0)) for t in order_trades)
