@@ -104,15 +104,18 @@ class GridMartingaleStrategy:
             self.logger.info(f"저장된 자본 복구: ${self.capital:.2f}")
             return
 
+        # 심볼에 따라 quote 자산 결정 (BTCUSDC → USDC, BTCUSDT → USDT)
+        quote_asset = 'USDT' if 'usdt' in self.symbol_type.lower() else 'USDC'
+
         # 새로 시작: 바이낸스 잔고의 40% 사용
         try:
-            balance = await self.binance.get_account_balance('USDC')
+            balance = await self.binance.get_account_balance(quote_asset)
             wallet_balance = balance['wallet_balance']
 
             # 총 잔고의 40%를 이 심볼의 운용 자본으로
             self.capital = wallet_balance * 0.4
 
-            self.logger.info(f"초기 자본 설정: 총 잔고 ${wallet_balance:.2f} × 40% = ${self.capital:.2f}")
+            self.logger.info(f"초기 자본 설정: {quote_asset} 잔고 ${wallet_balance:.2f} × 40% = ${self.capital:.2f}")
 
         except Exception as e:
             self.logger.error(f"잔고 조회 실패: {e}")

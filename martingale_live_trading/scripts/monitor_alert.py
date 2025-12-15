@@ -4,7 +4,7 @@ Grid Martingale 모니터링 & 텔레그램 알림
 
 감지 항목:
 1. 포지션 있는데 TP/BE 주문 없음
-2. 프로세스(trade_btc.py, trade_eth.py) OFF 상태
+2. 프로세스(trade_btc.py, trade_eth.py, trade_btc_usdt.py, trade_eth_usdt.py) OFF 상태
 
 실행: python scripts/monitor_alert.py
 """
@@ -138,49 +138,51 @@ async def monitor_loop():
     print("-" * 50)
 
     # 시작 알림
-    send_telegram("🟢 <b>Grid Martingale 모니터링 시작</b>\n\n감지 항목:\n• 포지션 있는데 TP/BE 주문 없음\n• 프로세스 OFF 상태")
+    send_telegram("🟢 <b>Grid Martingale 모니터링 시작</b>\n\n감지 항목:\n• 포지션 있는데 TP/BE 주문 없음\n• 프로세스 OFF 상태\n\n모니터링 대상:\n• BTCUSDC, ETHUSDC\n• BTCUSDT, ETHUSDT")
+
+    # 모니터링 대상 정의
+    targets = [
+        {'name': 'BTCUSDC', 'process': 'trade_btc.py', 'state_key': 'btc'},
+        {'name': 'ETHUSDC', 'process': 'trade_eth.py', 'state_key': 'eth'},
+        {'name': 'BTCUSDT', 'process': 'trade_btc_usdt.py', 'state_key': 'btc_usdt'},
+        {'name': 'ETHUSDT', 'process': 'trade_eth_usdt.py', 'state_key': 'eth_usdt'},
+    ]
 
     while True:
         try:
             alerts = []
+            status_parts = []
 
-            # 1. 프로세스 상태 체크
-            btc_running = check_process_running('trade_btc.py')
-            eth_running = check_process_running('trade_eth.py')
+            for target in targets:
+                name = target['name']
+                process = target['process']
+                state_key = target['state_key']
 
-            if not btc_running:
-                alert_key = 'btc_process_off'
-                if should_alert(alert_key):
-                    alerts.append("🔴 <b>[BTC] 프로세스 OFF!</b>\ntrade_btc.py가 실행되지 않고 있습니다.")
+                # 1. 프로세스 상태 체크
+                is_running = check_process_running(process)
 
-            if not eth_running:
-                alert_key = 'eth_process_off'
-                if should_alert(alert_key):
-                    alerts.append("🔴 <b>[ETH] 프로세스 OFF!</b>\ntrade_eth.py가 실행되지 않고 있습니다.")
-
-            # 2. 상태 파일 체크 (프로세스가 켜져있을 때만)
-            if btc_running:
-                btc_state = load_state('btc')
-                btc_issues = check_order_status(btc_state, 'btc')
-                for issue in btc_issues:
-                    alert_key = f'btc_order_{issue}'
+                if not is_running:
+                    alert_key = f'{state_key}_process_off'
                     if should_alert(alert_key):
-                        alerts.append(issue)
+                        alerts.append(f"🔴 <b>[{name}] 프로세스 OFF!</b>\n{process}가 실행되지 않고 있습니다.")
 
-            if eth_running:
-                eth_state = load_state('eth')
-                eth_issues = check_order_status(eth_state, 'eth')
-                for issue in eth_issues:
-                    alert_key = f'eth_order_{issue}'
-                    if should_alert(alert_key):
-                        alerts.append(issue)
+                # 2. 상태 파일 체크 (프로세스가 켜져있을 때만)
+                if is_running:
+                    state = load_state(state_key)
+                    issues = check_order_status(state, name)
+                    for issue in issues:
+                        alert_key = f'{state_key}_order_{issue}'
+                        if should_alert(alert_key):
+                            alerts.append(issue)
+
+                status_parts.append(f"{name}: {'🟢' if is_running else '🔴'}")
 
             # 알림 전송
             for alert in alerts:
                 send_telegram(alert)
 
             # 상태 로그
-            status = f"BTC: {'🟢' if btc_running else '🔴'} | ETH: {'🟢' if eth_running else '🔴'}"
+            status = " | ".join(status_parts)
             print(f"[{datetime.now()}] {status}")
 
         except Exception as e:

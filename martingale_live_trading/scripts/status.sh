@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# 트레이딩 상태 확인
+# 트레이딩 상태 확인 (USDC + USDT 4개 프로세스)
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,72 +11,76 @@ echo "  Grid Martingale Trading Status"
 echo "========================================"
 echo ""
 
-# BTC 상태
-BTC_PID_FILE="$PROJECT_DIR/state/btc.pid"
-echo "[ BTCUSDC ]"
-if [ -f "$BTC_PID_FILE" ]; then
-    BTC_PID=$(cat "$BTC_PID_FILE")
-    if ps -p "$BTC_PID" > /dev/null 2>&1; then
-        echo "  상태: 실행 중 (PID: $BTC_PID)"
-        # CPU/메모리 사용량
-        ps -p "$BTC_PID" -o %cpu,%mem,etime --no-headers | awk '{printf "  CPU: %s%%, MEM: %s%%, 실행시간: %s\n", $1, $2, $3}'
+# 공통 함수: 프로세스 상태 체크
+check_process_status() {
+    local NAME=$1
+    local PID_FILE=$2
+    local STATE_FILE=$3
+
+    echo "[ $NAME ]"
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if ps -p "$PID" > /dev/null 2>&1; then
+            echo "  상태: 실행 중 (PID: $PID)"
+            ps -p "$PID" -o %cpu,%mem,etime --no-headers | awk '{printf "  CPU: %s%%, MEM: %s%%, 실행시간: %s\n", $1, $2, $3}'
+        else
+            echo "  상태: 중지됨 (stale PID file)"
+        fi
     else
-        echo "  상태: 중지됨 (stale PID file)"
+        echo "  상태: 중지됨"
     fi
-else
-    echo "  상태: 중지됨"
-fi
 
-# BTC 상태 파일
-BTC_STATE="$PROJECT_DIR/state/state_btc.json"
-if [ -f "$BTC_STATE" ]; then
-    echo "  상태 파일: 존재"
-    # 마지막 업데이트 시간
-    LAST_UPDATE=$(python3 -c "import json; f=open('$BTC_STATE'); d=json.load(f); print(d.get('last_updated', 'N/A'))" 2>/dev/null)
-    echo "  마지막 업데이트: $LAST_UPDATE"
-fi
-echo ""
-
-# ETH 상태
-ETH_PID_FILE="$PROJECT_DIR/state/eth.pid"
-echo "[ ETHUSDC ]"
-if [ -f "$ETH_PID_FILE" ]; then
-    ETH_PID=$(cat "$ETH_PID_FILE")
-    if ps -p "$ETH_PID" > /dev/null 2>&1; then
-        echo "  상태: 실행 중 (PID: $ETH_PID)"
-        ps -p "$ETH_PID" -o %cpu,%mem,etime --no-headers | awk '{printf "  CPU: %s%%, MEM: %s%%, 실행시간: %s\n", $1, $2, $3}'
-    else
-        echo "  상태: 중지됨 (stale PID file)"
+    if [ -f "$STATE_FILE" ]; then
+        echo "  상태 파일: 존재"
+        LAST_UPDATE=$(python3 -c "import json; f=open('$STATE_FILE'); d=json.load(f); print(d.get('last_updated', 'N/A'))" 2>/dev/null)
+        echo "  마지막 업데이트: $LAST_UPDATE"
     fi
-else
-    echo "  상태: 중지됨"
-fi
+    echo ""
+}
 
-# ETH 상태 파일
-ETH_STATE="$PROJECT_DIR/state/state_eth.json"
-if [ -f "$ETH_STATE" ]; then
-    echo "  상태 파일: 존재"
-    LAST_UPDATE=$(python3 -c "import json; f=open('$ETH_STATE'); d=json.load(f); print(d.get('last_updated', 'N/A'))" 2>/dev/null)
-    echo "  마지막 업데이트: $LAST_UPDATE"
-fi
-echo ""
+# BTCUSDC 상태
+check_process_status "BTCUSDC" "$PROJECT_DIR/state/btc.pid" "$PROJECT_DIR/state/state_btc.json"
+
+# ETHUSDC 상태
+check_process_status "ETHUSDC" "$PROJECT_DIR/state/eth.pid" "$PROJECT_DIR/state/state_eth.json"
+
+# BTCUSDT 상태
+check_process_status "BTCUSDT" "$PROJECT_DIR/state/btc_usdt.pid" "$PROJECT_DIR/state/state_btc_usdt.json"
+
+# ETHUSDT 상태
+check_process_status "ETHUSDT" "$PROJECT_DIR/state/eth_usdt.pid" "$PROJECT_DIR/state/state_eth_usdt.json"
 
 # 오늘 로그 파일
 TODAY=$(date +%Y-%m-%d)
 echo "[ 오늘 로그 파일 ]"
-BTC_LOG="$PROJECT_DIR/logs/btc_grid_$TODAY.log"
-ETH_LOG="$PROJECT_DIR/logs/eth_grid_$TODAY.log"
+
+BTC_LOG="$PROJECT_DIR/logs/grid_martingale_btc_$TODAY.log"
+ETH_LOG="$PROJECT_DIR/logs/grid_martingale_eth_$TODAY.log"
+BTC_USDT_LOG="$PROJECT_DIR/logs/grid_martingale_btc_usdt_$TODAY.log"
+ETH_USDT_LOG="$PROJECT_DIR/logs/grid_martingale_eth_usdt_$TODAY.log"
 
 if [ -f "$BTC_LOG" ]; then
-    echo "  BTC: $BTC_LOG ($(wc -l < "$BTC_LOG") lines)"
+    echo "  BTCUSDC: $(wc -l < "$BTC_LOG") lines"
 else
-    echo "  BTC: 없음"
+    echo "  BTCUSDC: 없음"
 fi
 
 if [ -f "$ETH_LOG" ]; then
-    echo "  ETH: $ETH_LOG ($(wc -l < "$ETH_LOG") lines)"
+    echo "  ETHUSDC: $(wc -l < "$ETH_LOG") lines"
 else
-    echo "  ETH: 없음"
+    echo "  ETHUSDC: 없음"
+fi
+
+if [ -f "$BTC_USDT_LOG" ]; then
+    echo "  BTCUSDT: $(wc -l < "$BTC_USDT_LOG") lines"
+else
+    echo "  BTCUSDT: 없음"
+fi
+
+if [ -f "$ETH_USDT_LOG" ]; then
+    echo "  ETHUSDT: $(wc -l < "$ETH_USDT_LOG") lines"
+else
+    echo "  ETHUSDT: 없음"
 fi
 
 echo ""

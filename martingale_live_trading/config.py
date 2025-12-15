@@ -145,19 +145,25 @@ class Config:
     # Symbol mapping
     SYMBOLS = {
         'btc': 'BTCUSDC',
-        'eth': 'ETHUSDC'
+        'eth': 'ETHUSDC',
+        'btc_usdt': 'BTCUSDT',
+        'eth_usdt': 'ETHUSDT'
     }
 
     # Price precision (소수점 자릿수)
     PRICE_PRECISION = {
-        'btc': 1,   # BTC: $95000.1
-        'eth': 2    # ETH: $3500.12
+        'btc': 1,       # BTCUSDC: $95000.1
+        'eth': 2,       # ETHUSDC: $3500.12
+        'btc_usdt': 1,  # BTCUSDT: $95000.1
+        'eth_usdt': 2   # ETHUSDT: $3500.12
     }
 
     # Quantity precision (소수점 자릿수)
     QTY_PRECISION = {
-        'btc': 3,   # BTC: 0.001
-        'eth': 3    # ETH: 0.001
+        'btc': 3,       # BTCUSDC: 0.001
+        'eth': 3,       # ETHUSDC: 0.001
+        'btc_usdt': 3,  # BTCUSDT: 0.001
+        'eth_usdt': 3   # ETHUSDT: 0.001
     }
 
     # 파일 경로 템플릿
