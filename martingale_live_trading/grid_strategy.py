@@ -596,16 +596,21 @@ class GridMartingaleStrategy:
     # 청산 주문 관리
     # =========================================================================
 
-    async def _set_tp_order(self):
-        """익절(TP) 주문 설정 - Level 1만 체결된 상태, 바이낸스 실제 포지션 기준"""
+    async def _set_tp_order(self) -> bool:
+        """
+        익절(TP) 주문 설정 - Level 1만 체결된 상태, 바이낸스 실제 포지션 기준
+
+        Returns:
+            성공 여부
+        """
         if not self.position.has_position():
-            return
+            return False
 
         # 1. 바이낸스 실제 포지션 조회 (실패 시 재시도)
         pos_info = await self.binance.get_position_info_with_retry()
         if not pos_info:
             self.logger.error("TP 주문 실패: 포지션 조회 불가")
-            return
+            return False
 
         actual_size = pos_info['size']
         tp_price = self.calculate_tp_price(pos_info['entry_price'], self.position.direction)
@@ -627,20 +632,26 @@ class GridMartingaleStrategy:
                 quantity=actual_size
             )
             self.logger.info(f"TP 주문 설정: ${tp_price:.2f}, 수량: {actual_size:.6f}")
+            return True
 
-            # 주문 검증 트리거
-            await self.trigger_order_verify('TP')
+        self.logger.error("TP 주문 실패: 주문 생성 불가")
+        return False
 
-    async def _set_be_order(self):
-        """본절(BE) 주문 설정 - Level 2+ 체결된 상태, 바이낸스 실제 포지션에서 Level 1 제외"""
+    async def _set_be_order(self) -> bool:
+        """
+        본절(BE) 주문 설정 - Level 2+ 체결된 상태, 바이낸스 실제 포지션에서 Level 1 제외
+
+        Returns:
+            성공 여부
+        """
         if not self.position.has_position():
-            return
+            return False
 
         # 1. 바이낸스 실제 포지션 조회 (실패 시 재시도)
         pos_info = await self.binance.get_position_info_with_retry()
         if not pos_info:
             self.logger.error("BE 주문 실패: 포지션 조회 불가")
-            return
+            return False
 
         actual_size = pos_info['size']
         be_price = self.calculate_be_price(pos_info['entry_price'], self.position.direction)
@@ -652,7 +663,7 @@ class GridMartingaleStrategy:
 
         if close_amount <= 0:
             self.logger.warning(f"BE 주문 스킵: 덜어낼 물량 없음")
-            return
+            return True  # 덜어낼 물량 없으면 성공으로 처리 (재시도 불필요)
 
         # 3. 덜어내기 청산 주문 (실패 시 0.1%씩 줄이며 재시도)
         order = await self.binance.place_limit_close(
@@ -669,9 +680,10 @@ class GridMartingaleStrategy:
                 quantity=close_amount
             )
             self.logger.info(f"BE 주문 설정: ${be_price:.2f}, 덜어내기 수량: {close_amount:.6f} (Level1 {self.position.level1_btc_amount:.6f} 유지)")
+            return True
 
-            # 주문 검증 트리거
-            await self.trigger_order_verify('BE')
+        self.logger.error("BE 주문 실패: 주문 생성 불가")
+        return False
 
     async def _set_sl_order(self):
         """손절(SL) 주문 설정 - Level 4 체결 후"""
@@ -702,6 +714,8 @@ class GridMartingaleStrategy:
         - Level 1: TP 주문
         - Level 2~3: BE 주문
         - Level 4: BE + SL 주문
+
+        실패 시 재시도 큐에 등록
         """
         # 기존 TP/BE 주문 취소
         if self.orders.tp_order:
@@ -716,10 +730,16 @@ class GridMartingaleStrategy:
 
         if level == 1:
             # Level 1만: TP 주문
-            await self._set_tp_order()
+            success = await self._set_tp_order()
+            if not success:
+                self.logger.warning("TP 주문 실패 - 재시도 큐 등록")
+                await self.trigger_order_verify('TP')
         elif level >= 2:
             # Level 2+: BE 주문
-            await self._set_be_order()
+            success = await self._set_be_order()
+            if not success:
+                self.logger.warning("BE 주문 실패 - 재시도 큐 등록")
+                await self.trigger_order_verify('BE')
 
             if level >= 4:
                 # Level 4: SL도 설정
@@ -1123,18 +1143,30 @@ class GridMartingaleStrategy:
 
     async def _verify_tp_order(self, binance_order_ids: set, request: Dict):
         """TP 주문 검증 및 재발행"""
-        if not self.orders.tp_order:
+        # 포지션이 없으면 검증 불필요
+        if not self.position.has_position():
             return
 
-        if self.orders.tp_order['order_id'] in binance_order_ids:
+        # Level 1이 아니면 TP 주문 불필요
+        if self.position.current_level != 1:
+            return
+
+        # TP 주문이 있고 바이낸스에도 있으면 정상
+        if self.orders.tp_order and self.orders.tp_order['order_id'] in binance_order_ids:
             self.logger.info("TP 주문 검증 완료: 정상")
             return
 
+        # TP 주문 없거나 바이낸스에 없음 - 재발행 시도
         self.logger.warning("TP 주문 누락 - 재발행 시도")
 
         try:
-            await self._set_tp_order()
-            self.logger.info("TP 주문 재발행 성공")
+            success = await self._set_tp_order()
+            if success:
+                self.logger.info("TP 주문 재발행 성공")
+            else:
+                self.logger.warning("TP 주문 재발행 실패 - 재시도 큐 등록")
+                request['retry_count'] += 1
+                await self.order_verify_queue.put(request)
         except Exception as e:
             self.logger.error(f"TP 주문 재발행 에러: {e}")
             request['retry_count'] += 1
@@ -1142,18 +1174,30 @@ class GridMartingaleStrategy:
 
     async def _verify_be_order(self, binance_order_ids: set, request: Dict):
         """BE 주문 검증 및 재발행"""
-        if not self.orders.be_order:
+        # 포지션이 없으면 검증 불필요
+        if not self.position.has_position():
             return
 
-        if self.orders.be_order['order_id'] in binance_order_ids:
+        # Level 2 미만이면 BE 주문 불필요
+        if self.position.current_level < 2:
+            return
+
+        # BE 주문이 있고 바이낸스에도 있으면 정상
+        if self.orders.be_order and self.orders.be_order['order_id'] in binance_order_ids:
             self.logger.info("BE 주문 검증 완료: 정상")
             return
 
+        # BE 주문 없거나 바이낸스에 없음 - 재발행 시도
         self.logger.warning("BE 주문 누락 - 재발행 시도")
 
         try:
-            await self._set_be_order()
-            self.logger.info("BE 주문 재발행 성공")
+            success = await self._set_be_order()
+            if success:
+                self.logger.info("BE 주문 재발행 성공")
+            else:
+                self.logger.warning("BE 주문 재발행 실패 - 재시도 큐 등록")
+                request['retry_count'] += 1
+                await self.order_verify_queue.put(request)
         except Exception as e:
             self.logger.error(f"BE 주문 재발행 에러: {e}")
             request['retry_count'] += 1

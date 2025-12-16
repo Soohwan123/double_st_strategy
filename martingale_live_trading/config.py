@@ -209,7 +209,7 @@ class Config:
     @classmethod
     def get_log_prefix(cls, symbol_type: str) -> str:
         """로그 파일 prefix"""
-        return f"grid_martingale_{symbol_type.lower()}"
+        return symbol_type.lower()
 
     @classmethod
     def validate(cls) -> bool:
