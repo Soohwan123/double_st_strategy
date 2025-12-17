@@ -147,7 +147,8 @@ class Config:
         'btc': 'BTCUSDC',
         'eth': 'ETHUSDC',
         'btc_usdt': 'BTCUSDT',
-        'eth_usdt': 'ETHUSDT'
+        'eth_usdt': 'ETHUSDT',
+        'xrp_usdt': 'XRPUSDT'
     }
 
     # Price precision (소수점 자릿수)
@@ -155,7 +156,8 @@ class Config:
         'btc': 1,       # BTCUSDC: $95000.1
         'eth': 2,       # ETHUSDC: $3500.12
         'btc_usdt': 1,  # BTCUSDT: $95000.1
-        'eth_usdt': 2   # ETHUSDT: $3500.12
+        'eth_usdt': 2,  # ETHUSDT: $3500.12
+        'xrp_usdt': 4   # XRPUSDT: $2.1234
     }
 
     # Quantity precision (소수점 자릿수)
@@ -163,7 +165,8 @@ class Config:
         'btc': 3,       # BTCUSDC: 0.001
         'eth': 3,       # ETHUSDC: 0.001
         'btc_usdt': 3,  # BTCUSDT: 0.001
-        'eth_usdt': 3   # ETHUSDT: 0.001
+        'eth_usdt': 3,  # ETHUSDT: 0.001
+        'xrp_usdt': 1   # XRPUSDT: 0.1
     }
 
     # 파일 경로 템플릿

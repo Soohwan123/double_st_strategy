@@ -4,7 +4,7 @@ Grid Martingale 모니터링 & 텔레그램 알림
 
 감지 항목:
 1. 포지션 있는데 TP/BE 주문 없음
-2. 프로세스(trade_btc.py, trade_eth.py, trade_btc_usdt.py, trade_eth_usdt.py) OFF 상태
+2. 프로세스(trade_btc.py, trade_eth.py, trade_btc_usdt.py, trade_eth_usdt.py, trade_xrp_usdt.py) OFF 상태
 
 실행: python scripts/monitor_alert.py
 """
@@ -138,7 +138,7 @@ async def monitor_loop():
     print("-" * 50)
 
     # 시작 알림
-    send_telegram("🟢 <b>Grid Martingale 모니터링 시작</b>\n\n감지 항목:\n• 포지션 있는데 TP/BE 주문 없음\n• 프로세스 OFF 상태\n\n모니터링 대상:\n• BTCUSDC, ETHUSDC\n• BTCUSDT, ETHUSDT")
+    send_telegram("🟢 <b>Grid Martingale 모니터링 시작</b>\n\n감지 항목:\n• 포지션 있는데 TP/BE 주문 없음\n• 프로세스 OFF 상태\n\n모니터링 대상:\n• BTCUSDC, ETHUSDC\n• BTCUSDT, ETHUSDT, XRPUSDT")
 
     # 모니터링 대상 정의
     targets = [
@@ -146,6 +146,7 @@ async def monitor_loop():
         {'name': 'ETHUSDC', 'process': 'trade_eth.py', 'state_key': 'eth'},
         {'name': 'BTCUSDT', 'process': 'trade_btc_usdt.py', 'state_key': 'btc_usdt'},
         {'name': 'ETHUSDT', 'process': 'trade_eth_usdt.py', 'state_key': 'eth_usdt'},
+        {'name': 'XRPUSDT', 'process': 'trade_xrp_usdt.py', 'state_key': 'xrp_usdt'},
     ]
 
     while True:

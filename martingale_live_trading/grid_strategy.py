@@ -95,13 +95,20 @@ class GridMartingaleStrategy:
         """
         초기 자본 설정
         - state 파일에 capital이 있으면 그 값 사용 (복구)
-        - 없으면 바이낸스 잔고의 40%를 초기 자본으로 설정
+        - XRP: state 없으면 기본값 300 USDT (독립 자본)
+        - BTC/ETH: state 없으면 바이낸스 잔고의 40% 사용
         """
         # state에서 capital 복구 시도
         state = self.state_manager.load_state()
         if state and 'capital' in state and state['capital'] > 0:
             self.capital = state['capital']
             self.logger.info(f"저장된 자본 복구: ${self.capital:.2f}")
+            return
+
+        # XRP는 독립 자본: state 없으면 기본값 300 USDT 사용
+        if 'xrp' in self.symbol_type.lower():
+            self.capital = self._get_param('INITIAL_CAPITAL', 300.0)
+            self.logger.info(f"초기 자본 설정 (XRP 독립): ${self.capital:.2f}")
             return
 
         # 심볼에 따라 quote 자산 결정 (BTCUSDC → USDC, BTCUSDT → USDT)

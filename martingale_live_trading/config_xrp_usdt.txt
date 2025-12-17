@@ -1,0 +1,36 @@
+# XRPUSDT Grid Martingale Configuration
+# 프로그램 실행 중에도 이 파일을 수정하면 자동 반영됩니다.
+# 주석(#)과 빈 줄은 무시됩니다.
+
+# 자본 설정 (XRP는 독립 자본 - 300 USDT 기본값)
+INITIAL_CAPITAL=300.0
+
+# 레버리지
+LEVERAGE_LONG=20
+LEVERAGE_SHORT=5
+
+# 거래 방향: LONG, SHORT, BOTH
+TRADE_DIRECTION=LONG
+
+# 그리드 설정 (XRP는 0.02)
+GRID_RANGE_PCT=0.02
+
+# 최대 진입 레벨
+MAX_ENTRY_LEVEL=4
+
+# 진입 비율 (쉼표로 구분)
+ENTRY_RATIOS=0.05,0.20,0.25,0.50
+
+# 레벨별 진입 거리 (쉼표로 구분) - XRP 전용
+LEVEL_DISTANCES=0.005,0.010,0.020,0.025
+
+# 손절 거리 (XRP는 3%)
+SL_DISTANCE=0.030
+
+# 익절 설정
+TP_PCT=0.005
+BE_PCT=0.001
+
+# 수수료 (USDT 페어)
+MAKER_FEE=0.0002
+TAKER_FEE=0.0004

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# 트레이딩 상태 확인 (USDC + USDT 4개 프로세스)
+# 트레이딩 상태 확인 (USDC + USDT 5개 프로세스)
 #
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +32,9 @@ check_process_status() {
 
     if [ -f "$STATE_FILE" ]; then
         echo "  상태 파일: 존재"
+        CAPITAL=$(python3 -c "import json; f=open('$STATE_FILE'); d=json.load(f); print(f\"\${d.get('capital', 0):.2f}\")" 2>/dev/null)
         LAST_UPDATE=$(python3 -c "import json; f=open('$STATE_FILE'); d=json.load(f); print(d.get('last_updated', 'N/A'))" 2>/dev/null)
+        echo "  자본금: \$$CAPITAL"
         echo "  마지막 업데이트: $LAST_UPDATE"
     fi
     echo ""
@@ -50,14 +52,18 @@ check_process_status "BTCUSDT" "$PROJECT_DIR/state/btc_usdt.pid" "$PROJECT_DIR/s
 # ETHUSDT 상태
 check_process_status "ETHUSDT" "$PROJECT_DIR/state/eth_usdt.pid" "$PROJECT_DIR/state/state_eth_usdt.json"
 
+# XRPUSDT 상태
+check_process_status "XRPUSDT" "$PROJECT_DIR/state/xrp_usdt.pid" "$PROJECT_DIR/state/state_xrp_usdt.json"
+
 # 오늘 로그 파일
 TODAY=$(date +%Y-%m-%d)
 echo "[ 오늘 로그 파일 ]"
 
-BTC_LOG="$PROJECT_DIR/logs/grid_martingale_btc_$TODAY.log"
-ETH_LOG="$PROJECT_DIR/logs/grid_martingale_eth_$TODAY.log"
-BTC_USDT_LOG="$PROJECT_DIR/logs/grid_martingale_btc_usdt_$TODAY.log"
-ETH_USDT_LOG="$PROJECT_DIR/logs/grid_martingale_eth_usdt_$TODAY.log"
+BTC_LOG="$PROJECT_DIR/logs/btc_$TODAY.log"
+ETH_LOG="$PROJECT_DIR/logs/eth_$TODAY.log"
+BTC_USDT_LOG="$PROJECT_DIR/logs/btc_usdt_$TODAY.log"
+ETH_USDT_LOG="$PROJECT_DIR/logs/eth_usdt_$TODAY.log"
+XRP_USDT_LOG="$PROJECT_DIR/logs/xrp_usdt_$TODAY.log"
 
 if [ -f "$BTC_LOG" ]; then
     echo "  BTCUSDC: $(wc -l < "$BTC_LOG") lines"
@@ -81,6 +87,12 @@ if [ -f "$ETH_USDT_LOG" ]; then
     echo "  ETHUSDT: $(wc -l < "$ETH_USDT_LOG") lines"
 else
     echo "  ETHUSDT: 없음"
+fi
+
+if [ -f "$XRP_USDT_LOG" ]; then
+    echo "  XRPUSDT: $(wc -l < "$XRP_USDT_LOG") lines"
+else
+    echo "  XRPUSDT: 없음"
 fi
 
 echo ""
