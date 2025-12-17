@@ -856,27 +856,55 @@ class GridMartingaleStrategy:
         await self.reset_grid_after_partial_close()
 
     async def on_sl_filled(self, price: float):
-        """SL 체결 시 처리"""
-        self.logger.info(f"SL 체결 감지: ${price:.2f}")
+        """
+        SL 체결 시 처리
 
-        # 체결된 주문번호 저장 (PnL 조회용)
-        sl_order_id = self.orders.sl_order['order_id'] if self.orders.sl_order else None
+        SL은 시장가로 빠르게 체결되어 주문 조회가 실패할 수 있으므로
+        바이낸스 API 조회 없이 예상 PnL(수수료 포함)로 즉시 처리
+        """
+        self.logger.warning(f"SL 체결 감지: ${price:.2f} - 손절 처리 시작")
 
-        # 1. 동기화 전에 PnL 계산 (동기화 후 포지션이 없어지므로)
-        expected_pnl = self._calculate_pnl(price)
+        # 1. 동기화 전에 PnL 및 수수료 계산
         close_size = self.position.total_size
         close_level = self.position.current_level
-        self.logger.info(f"SL 체결: ${price:.2f}, 예상 PnL: ${expected_pnl:.2f}")
+        avg_price = self.position.avg_price
 
-        # 2. 바이낸스 포지션 동기화 (성공할 때까지 재시도)
+        # Gross PnL (수수료 제외)
+        if self.position.direction == 'LONG':
+            gross_pnl = (price - avg_price) * close_size
+        else:
+            gross_pnl = (avg_price - price) * close_size
+
+        # 진입 수수료 계산 (모든 레벨 진입의 합, 지정가=MAKER_FEE)
+        maker_fee = self._get_param('MAKER_FEE', 0.0)
+        entry_value = avg_price * close_size
+        entry_fee = entry_value * maker_fee
+
+        # 청산 수수료 (SL은 시장가=TAKER_FEE)
+        taker_fee = self._get_param('TAKER_FEE', 0.0004)
+        exit_value = price * close_size
+        exit_fee = exit_value * taker_fee
+
+        # 총 수수료 및 순수익
+        total_fee = entry_fee + exit_fee
+        net_pnl = gross_pnl - total_fee
+
+        self.logger.warning(
+            f"SL 청산 계산: Gross PnL=${gross_pnl:.2f}, "
+            f"진입수수료=${entry_fee:.2f}, 청산수수료=${exit_fee:.2f}, "
+            f"Net PnL=${net_pnl:.2f}"
+        )
+
+        # 2. 자본금 즉시 업데이트 (API 조회 없이 직접 반영)
+        old_capital = self.capital
+        self.capital += net_pnl
+        self.logger.warning(f"자본금 업데이트: ${old_capital:.2f} → ${self.capital:.2f}")
+
+        # 3. 바이낸스 포지션 동기화
         await self._sync_position_from_binance()
 
-        # 3. 거래 기록
-        self._record_trade('SL', close_level, price, close_size, expected_pnl)
-
-        # 4. 바이낸스 API에서 주문번호로 실제 PnL 조회하여 자본 업데이트
-        # 못 찾으면 예상 PnL 사용
-        await self.update_capital_from_pnl(sl_order_id, fallback_pnl=expected_pnl)
+        # 4. 거래 기록 (net_pnl 기록)
+        self._record_trade('SL', close_level, price, close_size, net_pnl)
 
         # 5. 그리드 재설정 (손절가가 새 center)
         await self.reset_grid_after_full_close(price)
@@ -996,9 +1024,9 @@ class GridMartingaleStrategy:
                         self.logger.warning(f"BE 주문 부분체결: {executed_qty}/{orig_qty} - 전량 체결 대기 중")
 
         # 4. SL 체결 감지
+        # SL은 시장가로 빠르게 체결되므로 주문 조회 없이 즉시 처리
         if self.orders.sl_order:
             sl_price = self.orders.sl_order['price']
-            sl_order_id = self.orders.sl_order.get('order_id')
 
             # 가격 체크
             price_reached = False
@@ -1007,21 +1035,9 @@ class GridMartingaleStrategy:
             elif direction == 'SHORT' and price >= sl_price:
                 price_reached = True
 
-            if price_reached and sl_order_id:
-                # 주문 상태 확인
-                order_status = await self.binance.get_order_status(sl_order_id)
-
-                if order_status:
-                    status = order_status.get('status')
-
-                    if status == 'FILLED':
-                        # 완전 체결시에만 처리
-                        await self.on_sl_filled(sl_price)
-                    elif status == 'PARTIALLY_FILLED':
-                        # 부분 체결시 로그만 남기고 대기
-                        executed_qty = float(order_status.get('executedQty', 0))
-                        orig_qty = float(order_status.get('origQty', 0))
-                        self.logger.warning(f"SL 주문 부분체결: {executed_qty}/{orig_qty} - 전량 체결 대기 중")
+            if price_reached:
+                # 즉시 손절 처리 (주문 조회 스킵)
+                await self.on_sl_filled(sl_price)
 
         # 5. 그리드 범위 이탈 체크 (포지션 없을 때만)
         await self._check_grid_range(price)
