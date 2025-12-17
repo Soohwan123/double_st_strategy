@@ -899,6 +899,9 @@ class GridMartingaleStrategy:
         """
         틱데이터 처리 - 체결 감지
 
+        주문 상태를 확인하여 완전체결(FILLED)시에만 처리
+        부분체결(PARTIALLY_FILLED)시에는 대기
+
         Args:
             price: 현재 가격
         """
@@ -911,39 +914,114 @@ class GridMartingaleStrategy:
         for order in list(self.orders.pending_entry_orders):
             level = order['level']
             order_price = order['price']
+            order_id = order.get('order_id')
 
-            filled = False
-            if direction == 'LONG' and price < order_price:
-                filled = True
-            elif direction == 'SHORT' and price > order_price:
-                filled = True
+            # 가격 체크
+            price_reached = False
+            if direction == 'LONG' and price <= order_price:
+                price_reached = True
+            elif direction == 'SHORT' and price >= order_price:
+                price_reached = True
 
-            if filled:
-                await self.on_entry_filled(level, order_price, order['quantity'])
+            if price_reached and order_id:
+                # 주문 상태 확인
+                order_status = await self.binance.get_order_status(order_id)
+
+                if order_status:
+                    status = order_status.get('status')
+
+                    if status == 'FILLED':
+                        # 완전 체결시에만 처리
+                        await self.on_entry_filled(level, order_price, order['quantity'])
+                    elif status == 'PARTIALLY_FILLED':
+                        # 부분 체결시 로그만 남기고 대기
+                        executed_qty = float(order_status.get('executedQty', 0))
+                        orig_qty = float(order_status.get('origQty', 0))
+                        self.logger.info(f"Entry Level {level} 부분체결: {executed_qty}/{orig_qty}")
 
         # 2. TP 체결 감지
         if self.orders.tp_order:
             tp_price = self.orders.tp_order['price']
-            if direction == 'LONG' and price > tp_price:
-                await self.on_tp_filled(tp_price)
-            elif direction == 'SHORT' and price < tp_price:
-                await self.on_tp_filled(tp_price)
+            tp_order_id = self.orders.tp_order.get('order_id')
+
+            # 가격 체크
+            price_reached = False
+            if direction == 'LONG' and price >= tp_price:
+                price_reached = True
+            elif direction == 'SHORT' and price <= tp_price:
+                price_reached = True
+
+            if price_reached and tp_order_id:
+                # 주문 상태 확인
+                order_status = await self.binance.get_order_status(tp_order_id)
+
+                if order_status:
+                    status = order_status.get('status')
+
+                    if status == 'FILLED':
+                        # 완전 체결시에만 처리
+                        await self.on_tp_filled(tp_price)
+                    elif status == 'PARTIALLY_FILLED':
+                        # 부분 체결시 로그만 남기고 대기
+                        executed_qty = float(order_status.get('executedQty', 0))
+                        orig_qty = float(order_status.get('origQty', 0))
+                        self.logger.warning(f"TP 주문 부분체결: {executed_qty}/{orig_qty} - 전량 체결 대기 중")
 
         # 3. BE 체결 감지
         if self.orders.be_order:
             be_price = self.orders.be_order['price']
-            if direction == 'LONG' and price > be_price:
-                await self.on_be_filled(be_price)
-            elif direction == 'SHORT' and price < be_price:
-                await self.on_be_filled(be_price)
+            be_order_id = self.orders.be_order.get('order_id')
+
+            # 가격 체크
+            price_reached = False
+            if direction == 'LONG' and price >= be_price:
+                price_reached = True
+            elif direction == 'SHORT' and price <= be_price:
+                price_reached = True
+
+            if price_reached and be_order_id:
+                # 주문 상태 확인
+                order_status = await self.binance.get_order_status(be_order_id)
+
+                if order_status:
+                    status = order_status.get('status')
+
+                    if status == 'FILLED':
+                        # 완전 체결시에만 처리
+                        await self.on_be_filled(be_price)
+                    elif status == 'PARTIALLY_FILLED':
+                        # 부분 체결시 로그만 남기고 대기
+                        executed_qty = float(order_status.get('executedQty', 0))
+                        orig_qty = float(order_status.get('origQty', 0))
+                        self.logger.warning(f"BE 주문 부분체결: {executed_qty}/{orig_qty} - 전량 체결 대기 중")
 
         # 4. SL 체결 감지
         if self.orders.sl_order:
             sl_price = self.orders.sl_order['price']
-            if direction == 'LONG' and price < sl_price:
-                await self.on_sl_filled(sl_price)
-            elif direction == 'SHORT' and price > sl_price:
-                await self.on_sl_filled(sl_price)
+            sl_order_id = self.orders.sl_order.get('order_id')
+
+            # 가격 체크
+            price_reached = False
+            if direction == 'LONG' and price <= sl_price:
+                price_reached = True
+            elif direction == 'SHORT' and price >= sl_price:
+                price_reached = True
+
+            if price_reached and sl_order_id:
+                # 주문 상태 확인
+                order_status = await self.binance.get_order_status(sl_order_id)
+
+                if order_status:
+                    status = order_status.get('status')
+
+                    if status == 'FILLED':
+                        # 완전 체결시에만 처리
+                        await self.on_sl_filled(sl_price)
+                    elif status == 'PARTIALLY_FILLED':
+                        # 부분 체결시 로그만 남기고 대기
+                        executed_qty = float(order_status.get('executedQty', 0))
+                        orig_qty = float(order_status.get('origQty', 0))
+                        self.logger.warning(f"SL 주문 부분체결: {executed_qty}/{orig_qty} - 전량 체결 대기 중")
 
         # 5. 그리드 범위 이탈 체크 (포지션 없을 때만)
         await self._check_grid_range(price)
