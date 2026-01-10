@@ -1,3 +1,11 @@
+# 프로젝트 환경 설정
+
+## Python 실행 환경
+- Python 실행 시 반드시 `venv/bin/python` 사용
+- 예: `venv/bin/python backtest_rsi_200.py`
+
+---
+
 # Grid Martingale V3.2 Not Even 전략 (backtest_grid_martingale_3_2_not_even.py)
 
 ## 전략 개요
@@ -402,80 +410,379 @@ level1_price, level2_price, level3_price, level4_price
 
 
 ## TODO
+### Hyper Scalper V2 전략을 live_trading에 구현하기
 
-backtest_grid_martingale_3_2_not_even.py 기반으로 live_trading 프로그램을 만들것.
+**참조 파일**: `backtest_hyper_scalper_v2.py`
 
-근데 live_trading 프로그램을 두개를 만들것임. 
-하나는 ETHUSDC 하나는 BTCUSDC를 거래할 것.
-현재 live_trading/ 내부에 기본적인 인프라 코드들이 다있고 저것을 기반으로 만들면 됨.
+---
 
-중요한 파일들은 
-.env
-binance_library.py
-config.py
-data_handle.py -> 아마 안필요할것(확실치 않음)
-double_bb.py-> main 트레이딩 코드 ( 여기서 파일 이름을 다른걸 사용하고 로직을 손보면 됨. )
-.sh 파일들은 운영을 위한 파일들.
+# Hyper Scalper V2 전략 상세 문서
 
+## 전략 개요
 
-BTCUSDC 를 위한 파라미터 ->
+**EMA 정배열/역배열 + ADX + Retest** 기반의 추세추종 전략.
+- 15분봉 BTC/USDT
+- LONG & SHORT 양방향
+- 동적 레버리지 (손절 거리 기반)
+- 동적 익절 (ATR 기반)
 
-INITIAL_CAPITAL = 1000.0  # USDT
-LEVERAGE_LONG = 20   # LONG 레버리지 (파라미터)
-LEVERAGE_SHORT = 5  # SHORT 레버리지 (파라미터)
-TRADE_DIRECTION = 'LONG'
-GRID_RANGE_PCT = 0.040  # ±4% 범위 : 이더리움은 0.02로
-MAX_ENTRY_LEVEL = 4  # 최대 진입 레벨
-ENTRY_RATIOS = [0.05, 0.20, 0.25, 0.5]  # 5%, 10%, 30%, 55%
-LEVEL_DISTANCES = [0.005, 0.010, 0.040, 0.045]  # 진입 레벨
-SL_DISTANCE = 0.05  # 손절 레벨 (5%)
-TP_PCT = 0.005  # 익절: 평단가 +0.5% (Level 1~2)
-BE_PCT = 0.001  # 본절: 평단가 +0.1% (Level 3 이상, 수수료 없음)
-MAKER_FEE = 0.0  # 지정가 수수료
-TAKER_FEE = 0.000275  # 시장가 수수료 0.0275%
+---
 
-ETHUSDC 를 위한 파라미터 ->
+## 파라미터 설정
 
-INITIAL_CAPITAL = 1000.0  # USDT
-LEVERAGE_LONG = 20   # LONG 레버리지 (파라미터)
-LEVERAGE_SHORT = 5  # SHORT 레버리지 (파라미터)
-TRADE_DIRECTION = 'LONG'
-GRID_RANGE_PCT = 0.020  # ±4% 범위 : 이더리움은 0.02로
-MAX_ENTRY_LEVEL = 4  # 최대 진입 레벨
-ENTRY_RATIOS = [0.05, 0.20, 0.25, 0.5]  # 5%, 10%, 30%, 55%
-LEVEL_DISTANCES = [0.005, 0.010, 0.040, 0.045]  # 진입 레벨
-SL_DISTANCE = 0.05  # 손절 레벨 (5%)
-TP_PCT = 0.005  # 익절: 평단가 +0.5% (Level 1~2)
-BE_PCT = 0.001  # 본절: 평단가 +0.1% (Level 3 이상, 수수료 없음)
-MAKER_FEE = 0.0  # 지정가 수수료
-TAKER_FEE = 0.000275  # 시장가 수수료 0.0275%
+```python
+# 자본 및 리스크
+INITIAL_CAPITAL = 1000.0
+MAX_LEVERAGE = 90
+RISK_PER_TRADE = 0.07  # 거래당 7% 리스크 (레버리지 계산에 사용)
 
+# 거래 방향
+TRADE_DIRECTION = 'BOTH'  # 'BOTH', 'LONG', 'SHORT'
 
-실제 라이브코드를 만들기위해 martingale_live_trading 디렉토리를 만들고 위 라이브러리나 env 파일같은걸 모두 가져오고 수정해. 또 구조자체는 설정파일 같은건 공유하돼 BTC와 ETHUSDC 를 거래하는 프로세스를 따로 둘거야.
-로그파일도 따로 만들거고. 거래 기록을 저장하는 csv 파일도 따로 둘거야. 아마 이럴러면 main 트레이딩 코드를 두개로 만들어야 할까? 아니면 뭐 fork 떠도 상관없긴한데.
+# EMA 설정
+EMA_FAST = 25
+EMA_MID = 100
+EMA_SLOW = 200
 
-어쨋든 이번에 만들 live trading  프로그램 코드를 설계할떄 유의할점은 ... 레버리지나 환경변수 파라미터같은 것들을 .env 파일이나 txt 파일이나 어느곳에서 프로그램이 지속적으로 읽어오게 했으면 좋겠어.
-그렇게 하면 내가 언제든지 프로그램이 돌아가는 중에도 환경변수를 바꿔서 적용하면 돌아가는 프로그램 내에서도 환경변수가 적용이 될테니까.
+# ADX 설정
+ADX_LENGTH = 14
+ADX_THRESHOLD = 30.0  # 강한 추세 기준
 
-두번째 유의할점은 지정가 주문, stoploss 주문 등은 미리 걸어놔야하잖아. 또 포지션 정보 같은것들 이런것들을 현재시점 기준으로 체결되기전까지는 스냅샷을 텍스트파일로 저장하고 있다가
-프로그램이 이상정지되면 항상 포지션, 주문 정보들을 불러올수 있게 했으면 좋겠어 ( 물론 내가 알기로 포지션정보는 binance api 로도 가져올수 있는걸로 알아서 만약 그렇다면 얜 안넣어도됨. )
-또 물론 지정가 스탑로스등 터치후 체결이 되면 그시점에 텍스트 파일을 수정해야겠지?
+# Retest 설정
+RETEST_LOOKBACK = 5  # 최근 5봉 내 dip/rally 확인
 
-또한 우리가 
-ENTRY_RATIOS = [0.05, 0.20, 0.25, 0.5]  # 5%, 10%, 30%, 55%
-이런식으로 들어가는데 각 레벨에 들어갈 물량이 전체자산의 퍼센트잖아?
-그리고 추가진입할때마다 평단가를 낮춰야 하고. 근데 이게 레버리지가 20배로 들어가니까 증거금이 정확하게 5퍼센트로 잡히지 않을 수도 있어서 내가볼땐
-마지막 0.5 (50프로 *20배) 가 들어갈땐 증거금부족으로 주문이 실패가 뜰수도있잖아. 만약 마지막 지정가 주문이 실패가 뜨면 1퍼센트씩 줄어가면서 주문을 계속 내.
-50퍼센트 * 20배 -> 49퍼센트 *20배 ->.... 성공할떄까지. 그리고 몇퍼센트에 주문이 나갔는지 로그에 남겨줘. 그걸보고 내가 마지막 RATIO 값을 수정할게.
+# 손절 설정
+SL_LOOKBACK = 29     # 최근 29봉 최저/최고가 기준
+MAX_SL_DISTANCE = 0.03  # 손절 거리 최대 3% 캡
 
-좋아. 여기까지는 기본적인 구조고. 거래는 어떤식으로 갈꺼냐면
-프로그램이 시작하자마자 LONG 만볼꺼니까 아래 거미줄 지정가를 치겠지? -> 여기까지 잘 됐다고 가정하고 (증거금부족 오류 해결 후)
-각 레벨들이 체결될때마다 포지션 정보를 가져와서 평단가를 체크후 우리의 로직대로 BE 지정가 청산 추문(0.1%)이던 TP 청산 주문(0.5%)이든 넣을거야 ( LEVEL 1 만 체결된 상황이면 TP 청산으로 그 이후가 체결된 상황이면 BE 겠지? )
-여기서 주의할 점이 LEVEL1 체결후 TP 지정가 청산주문 걸어놓고 -> LEVEL2 가 체결되면 TP 지정가 청산주문 취소 -> LEVEL2 평단 바이낸스에서 확인 -> BE 주문 ->... 이런식으로 청산주문을 옮기는 알고리즘을 잘 짜야해.
-그러다가 BE 지정가가 체결되면 다시 LEVEL1 으로 돌아온거니까 TP 지정가 주문을 넣어야겠지? 이렇게 반복이야.
+# ATR 설정 (익절용)
+ATR_LENGTH = 14
+TP_ATR_MULT_LONG = 4.2   # 롱 익절 = 진입가 + ATR × 4.2
+TP_ATR_MULT_SHORT = 3.2  # 숏 익절 = 진입가 - ATR × 3.2
 
-또 마지막 레벨4가 체결되는 순간! 체결되자마자 STOP LOSS 주문 바로 걸어두고 -> BE 지정가 주문 옮겨야해.
+# 수수료
+MAKER_FEE = 0.0       # 지정가 (익절)
+TAKER_FEE = 0.000275  # 시장가 (진입, 손절) = 0.0275%
+```
 
-그리고 TP 청산이 체결되는순간 기존에 있던 모든 주문들은 취소 후 -> 그리드 재계산 -> 진입 거미줄주문들 다시넣기 반복 ( 이게 우리 로직 맞지???... )
+---
 
-이런식으로 가야하는거야. 질문이있으면 질문해도되고 너가 이해한바를 잘 설명후 나에게 물어보고 작업 시작해
+## 지표 계산
+
+### 1. EMA (Exponential Moving Average)
+```python
+# TradingView 호환 EMA
+ema = close.ewm(span=length, adjust=False).mean()
+```
+
+### 2. ATR (Average True Range) - RMA 기반
+```python
+def calculate_atr(high, low, close, length):
+    prev_close = close.shift(1)
+    tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+    atr = calculate_rma(tr, length)  # Wilder's MA
+    return atr
+```
+
+### 3. ADX (Average Directional Index)
+```python
+def calculate_adx(high, low, close, length):
+    # +DM, -DM 계산
+    up_move = high - high.shift(1)
+    down_move = low.shift(1) - low
+
+    plus_dm = up_move if (up_move > down_move and up_move > 0) else 0
+    minus_dm = down_move if (down_move > up_move and down_move > 0) else 0
+
+    # DI 계산
+    atr = calculate_rma(tr, length)
+    plus_di = 100 * calculate_rma(plus_dm, length) / atr
+    minus_di = 100 * calculate_rma(minus_dm, length) / atr
+
+    # ADX
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx = calculate_rma(dx, length)
+    return adx
+```
+
+---
+
+## 진입 조건
+
+### LONG 진입 (4가지 조건 모두 충족)
+
+```python
+# 1. 상승 추세 (EMA 정배열)
+bull_trend = (close > EMA200) and (EMA25 > EMA100) and (EMA100 > EMA200)
+
+# 2. 강한 추세
+strong_trend = ADX >= 30
+
+# 3. 최근 5봉 내 저가가 EMA25 아래였던 적 있음 (dip 확인)
+had_low_below_fast = min(low - EMA25, window=5) < 0
+
+# 4. 현재 종가가 EMA25 위 (reclaim)
+reclaim_long = close > EMA25
+
+# 최종 LONG 시그널
+long_signal = bull_trend and strong_trend and had_low_below_fast and reclaim_long
+```
+
+### SHORT 진입 (4가지 조건 모두 충족)
+
+```python
+# 1. 하락 추세 (EMA 역배열)
+bear_trend = (close < EMA200) and (EMA25 < EMA100) and (EMA100 < EMA200)
+
+# 2. 강한 추세
+strong_trend = ADX >= 30
+
+# 3. 최근 5봉 내 고가가 EMA25 위였던 적 있음 (rally 확인)
+had_high_above_fast = max(high - EMA25, window=5) > 0
+
+# 4. 현재 종가가 EMA25 아래 (reclaim)
+reclaim_short = close < EMA25
+
+# 최종 SHORT 시그널
+short_signal = bear_trend and strong_trend and had_high_above_fast and reclaim_short
+```
+
+---
+
+## 진입 실행 (execute_entry)
+
+### 1. 진입가
+```python
+entry_price = 신호봉의 close 가격
+```
+
+### 2. 손절가 (SL) 설정
+```python
+# 최근 29봉 기준
+if LONG:
+    stop_loss = min(low, window=SL_LOOKBACK)  # 최저가
+else:  # SHORT
+    stop_loss = max(high, window=SL_LOOKBACK)  # 최고가
+
+# 손절 거리 3% 캡 적용
+sl_distance = abs(entry_price - stop_loss) / entry_price
+if sl_distance > MAX_SL_DISTANCE:  # 0.03 = 3%
+    if LONG:
+        stop_loss = entry_price * (1 - MAX_SL_DISTANCE)
+    else:
+        stop_loss = entry_price * (1 + MAX_SL_DISTANCE)
+```
+
+### 3. 레버리지 계산 (핵심!)
+```python
+def calculate_leverage(entry_price, stop_loss):
+    sl_distance_pct = abs(entry_price - stop_loss) / entry_price
+
+    # 진입 수수료 + 손절 수수료 포함
+    effective_sl = sl_distance_pct + TAKER_FEE * 2  # 0.055% 추가
+
+    leverage = RISK_PER_TRADE / effective_sl  # 0.07 / effective_sl
+    leverage = min(leverage, MAX_LEVERAGE)    # 최대 90배
+    leverage = max(leverage, 1)               # 최소 1배
+
+    return round(leverage, 2)
+```
+
+**예시**:
+- 손절 거리 2% → effective_sl = 2.055% → leverage = 7% / 2.055% = 3.4배
+- 손절 거리 1% → effective_sl = 1.055% → leverage = 7% / 1.055% = 6.6배
+
+### 4. 익절가 (TP) 설정 - 수수료 보전 포함!
+```python
+# 진입 수수료를 익절에서 보전하기 위한 offset
+fee_offset = entry_price * TAKER_FEE * 2  # 약 0.055%
+
+if LONG:
+    take_profit = entry_price + ATR * TP_ATR_MULT_LONG + fee_offset
+else:
+    take_profit = entry_price - ATR * TP_ATR_MULT_SHORT - fee_offset
+```
+
+**왜 fee_offset을 추가하는가?**
+- 진입 시 TAKER 수수료 발생 (0.0275%)
+- 익절은 MAKER (수수료 0%)이지만, 진입 수수료를 회수해야 함
+- fee_offset × 2로 설정하여 보수적으로 보전
+
+### 5. 포지션 크기
+```python
+position_value = capital * leverage
+entry_size = position_value / entry_price  # BTC 수량
+```
+
+---
+
+## 청산 조건 (check_exit)
+
+**우선순위**: 청산(LIQ) > 손절(SL) > 익절(TP)
+
+```python
+def check_exit(idx):
+    # 청산가 계산 (레버리지 기반)
+    liq_distance = 1.0 / leverage  # 예: 10배 → 10%
+
+    if LONG:
+        liq_price = entry_price * (1 - liq_distance)
+
+        # 1. 청산 체크 (최우선)
+        if low <= liq_price:
+            return liq_price, 'LIQ'
+        # 2. 손절
+        if low <= stop_loss:
+            return stop_loss, 'SL'
+        # 3. 익절
+        if high >= take_profit:
+            return take_profit, 'TP'
+
+    else:  # SHORT
+        liq_price = entry_price * (1 + liq_distance)
+
+        if high >= liq_price:
+            return liq_price, 'LIQ'
+        if high >= stop_loss:
+            return stop_loss, 'SL'
+        if low <= take_profit:
+            return take_profit, 'TP'
+```
+
+**중요**: 진입봉에서는 청산 체크 안함 (`if idx <= entry_idx: continue`)
+
+---
+
+## 청산 실행 (execute_exit)
+
+```python
+def execute_exit(exit_price, reason):
+    # PnL 계산
+    if LONG:
+        pnl = (exit_price - entry_price) * entry_size
+    else:
+        pnl = (entry_price - exit_price) * entry_size
+
+    # 수수료 계산
+    entry_fee = entry_price * entry_size * TAKER_FEE  # 항상 TAKER
+
+    if reason in ['SL', 'LIQ']:
+        exit_fee = exit_price * entry_size * TAKER_FEE  # 시장가
+    else:  # TP, END
+        exit_fee = exit_price * entry_size * MAKER_FEE  # 지정가 = 0
+
+    total_fee = entry_fee + exit_fee
+    net_pnl = pnl - total_fee
+
+    capital += net_pnl
+```
+
+---
+
+## 수수료 정리
+
+| 상황 | 진입 | 청산 | 총 수수료 |
+|------|------|------|-----------|
+| 익절 (TP) | TAKER (0.0275%) | MAKER (0%) | 0.0275% |
+| 손절 (SL) | TAKER (0.0275%) | TAKER (0.0275%) | 0.055% |
+| 청산 (LIQ) | TAKER (0.0275%) | TAKER (0.0275%) | 0.055% |
+| 종료 (END) | TAKER (0.0275%) | MAKER (0%) | 0.0275% |
+
+---
+
+## Live Trading 구현 시 주의사항
+
+### 1. 진입 주문
+- **시장가 주문** (TAKER)
+- 신호 발생 시 즉시 진입
+- 진입 후 TP/SL 주문 동시 설정
+
+### 2. 익절 주문 (TP)
+- **지정가 주문** (MAKER)
+- 가격 = `entry_price + ATR × TP_ATR_MULT + fee_offset`
+- **fee_offset 필수**: `entry_price × TAKER_FEE × 2`
+
+### 3. 손절 주문 (SL)
+- **스탑 마켓 또는 지정가**
+- 가격 = `최근 29봉 최저/최고가` (최대 3% 캡 적용)
+
+### 4. 레버리지 설정 ( 혹은 레버리지를 이용한 size 즉 수량 설정)
+- 거래소 API로 동적 레버리지 설정
+- `leverage = RISK_PER_TRADE / (sl_distance + 0.00055)`
+- 최대 90배, 최소 1배
+
+### 5. 지표 계산
+- EMA 25/100/200, ADX 14, ATR 14
+- **RMA 사용** (TradingView 호환)
+- 최소 200봉 이상 히스토리 필요
+- 처음 프로그램을 켰을때 모든 지표들이 미리 계산이 되어있어야 함으로 300봉 전까지의 15분봉 데이터를 모두 받은후
+전부 계산을 한다. 하지만 api 로 이전 데이터를 다운받을시 데이터의 맨마지막데이터는 현재 15분봉의데이터이고 그 봉은 아직 마감이 되기전이다.
+즉 live 로 다음 15분봉 데이터가 들어올때 historical 데이터로 받은 df 맨 마지막의 데이터 (가장 최근 데이터) 를 삭제후 live 로 처음 받은 15분봉
+데이터를 이용해서 df 맨마지막 데이터와 지표값들과 replace 한다.
+이후부터는 df 맨 마지막으로 추가하면서 가장 오래된 데이터 하나를 삭제하면서 데이터들을 뒤로 민다. ( 마치 큐처럼 ) 그래서 총 300사이즈의 df 를 유지하고
+지표들 계산들도 유지한다.
+
+### 6. 신호 체크 타이밍
+- 봉 마감 시점에 신호 체크
+- 15분봉 마감 = xx:00, xx:15, xx:30, xx:45
+
+### 7. 포지션 관리
+- 한 번에 1개 포지션만
+- 포지션 있으면 신규 진입 불가
+- TP/SL 둘 중 하나 체결 시 나머지 취소
+
+---
+
+## 전략 흐름 요약
+
+```
+1. 봉 마감 시 지표 업데이트 (EMA, ADX, ATR)
+
+2. 포지션 없음?
+   → LONG 신호? (정배열 + ADX≥30 + dip + reclaim) → LONG 진입
+   → SHORT 신호? (역배열 + ADX≥30 + rally + reclaim) → SHORT 진입
+
+3. 포지션 있음?
+   → 청산가 터치? → 강제 청산 (LIQ)
+   → 손절가 터치? → 손절 (SL)
+   → 익절가 터치? → 익절 (TP)
+
+4. 진입 시:
+   - SL = 최근 29봉 최저/최고 (최대 3%)
+   - 레버리지 = 7% / (SL거리 + 수수료)
+   - TP = 진입가 ± ATR × 배수 + fee_offset
+   - 포지션 크기 = 자본 × 레버리지 / 진입가
+
+5. 청산 시:
+   - TP: 진입수수료만 차감 (MAKER 0%)
+   - SL/LIQ: 진입+청산 수수료 차감
+```
+
+---
+
+## 백테스트 결과 (2020.11 ~ 2025.12)
+
+```
+파라미터: SL_LOOKBACK=29, MAX_SL_DISTANCE=3%, RISK_PER_TRADE=7%
+수익률: ~20,000%+
+MDD: ~75-80%
+승률: ~55%
+거래수: ~1,300건
+```
+
+---
+
+## 구현 체크리스트
+
+- [ ] EMA 25/100/200 계산 (adjust=False)
+- [ ] ADX 계산 (RMA 기반)
+- [ ] ATR 계산 (RMA 기반)
+- [ ] LONG 신호 로직
+- [ ] SHORT 신호 로직
+- [ ] 동적 레버리지 계산 (수수료 포함)
+- [ ] 동적 TP 계산 (fee_offset 포함)
+- [ ] 동적 SL 계산 (최대 3% 캡)
+- [ ] 청산 체크 (LIQ > SL > TP 우선순위)
+- [ ] 수수료 처리 (진입 TAKER, TP MAKER, SL TAKER)
+- [ ] 포지션 상태 관리
+- [ ] 주문 관리 (TP/SL OCO)
