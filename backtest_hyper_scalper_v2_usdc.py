@@ -32,6 +32,8 @@ INITIAL_CAPITAL = 1000.0
 MAX_LEVERAGE = 90
 RISK_PER_TRADE = 0.07  # 5% 리스크
 
+SYMBOL = 'BTCUSDC'
+TF = '15m'
 # 거래 방향: 'BOTH', 'LONG', 'SHORT'
 TRADE_DIRECTION = 'BOTH'
 
@@ -54,16 +56,16 @@ RETEST_LOOKBACK = 5
 
 # 손절 설정
 SL_LOOKBACK = 29  # 손절가 계산용 lookback 봉 수
-MAX_SL_DISTANCE = 0.035  # 4%
+MAX_SL_DISTANCE = 0.030  # 4%
 
 # ATR 설정
-ATR_LENGTH = 10
-TP_ATR_MULT_LONG = 4.3   # 롱 익절 ATR 배수
-TP_ATR_MULT_SHORT = 4.3  # 숏 익절 ATR 배수
+ATR_LENGTH = 12
+TP_ATR_MULT_LONG = 4.2   # 롱 익절 ATR 배수
+TP_ATR_MULT_SHORT = 4.2  # 숏 익절 ATR 배수
 
 # 수수료
-MAKER_FEE = 0.0002
-TAKER_FEE = 0.0005
+MAKER_FEE = 0.0
+TAKER_FEE = 0.0004
 
 fee_protection = True  # 수수료 보호 기능 활성화 여부
 
@@ -248,7 +250,7 @@ class HyperScalperBacktester:
         # 익절가 설정 (ATR 기반 + 진입 수수료 보전 x2)
         fee_offset = 0
         if( fee_protection == True ):
-            fee_offset = self.entry_price * (TAKER_FEE * 2 + MAKER_FEE)
+            fee_offset = self.entry_price * TAKER_FEE * 2
         else:
             fee_offset = 0
 
@@ -395,12 +397,12 @@ class HyperScalperBacktester:
 
             # 남은 금액을 새 기준자금으로 설정
             self.base_capital = self.capital
-            print(f"[WITHDRAWAL] {timestamp}: {withdraw_amount:.2f} USDT 출금 → 잔액: {self.capital:.2f} USDT (총 출금: {self.total_withdrawn:.2f})")
+            print(f"[WITHDRAWAL] {timestamp}: {withdraw_amount:.2f} {SYMBOL} 출금 → 잔액: {self.capital:.2f} {SYMBOL} (총 출금: {self.total_withdrawn:.2f})")
 
     def run(self):
         """백테스트 실행"""
         print(f"Starting backtest with {len(self.df)} candles")
-        print(f"Initial capital: {INITIAL_CAPITAL} USDT")
+        print(f"Initial capital: {INITIAL_CAPITAL} {SYMBOL}")
         print("-" * 50)
 
         for idx in range(1, len(self.df)):
@@ -474,12 +476,12 @@ class HyperScalperBacktester:
         if len(long_trades) > 0:
             long_win_rate = len(long_wins) / len(long_trades) * 100
             long_pnl = sum(t['pnl'] for t in long_trades)
-            print(f"  - Long Win Rate: {long_win_rate:.2f}%, PnL: {long_pnl:.2f} USDT")
+            print(f"  - Long Win Rate: {long_win_rate:.2f}%, PnL: {long_pnl:.2f} {SYMBOL}")
 
         if len(short_trades) > 0:
             short_win_rate = len(short_wins) / len(short_trades) * 100
             short_pnl = sum(t['pnl'] for t in short_trades)
-            print(f"  - Short Win Rate: {short_win_rate:.2f}%, PnL: {short_pnl:.2f} USDT")
+            print(f"  - Short Win Rate: {short_win_rate:.2f}%, PnL: {short_pnl:.2f} {SYMBOL}")
 
         # MDD 계산
         if total_trades > 0:
@@ -493,16 +495,16 @@ class HyperScalperBacktester:
                     max_drawdown = drawdown
             print(f"\nMDD: {max_drawdown * 100:.2f}%")
 
-        print(f"Total PnL: {total_pnl:.2f} USDT")
-        print(f"Final Capital: {self.capital:.2f} USDT")
+        print(f"Total PnL: {total_pnl:.2f} {SYMBOL}")
+        print(f"Final Capital: {self.capital:.2f} {SYMBOL}")
         print(f"Return: {(self.capital / INITIAL_CAPITAL - 1) * 100:.2f}%")
 
         # 출금 정보
         if WITHDRAWAL_ENABLED and self.total_withdrawn > 0:
             print(f"\n--- Withdrawal Summary ---")
-            print(f"Total Withdrawn: {self.total_withdrawn:.2f} USDT")
+            print(f"Total Withdrawn: {self.total_withdrawn:.2f} {SYMBOL}")
             print(f"Withdrawal Count: {len(self.withdrawals)}")
-            print(f"Final + Withdrawn: {self.capital + self.total_withdrawn:.2f} USDT")
+            print(f"Final + Withdrawn: {self.capital + self.total_withdrawn:.2f} {SYMBOL}")
             print(f"Actual Return: {((self.capital + self.total_withdrawn) / INITIAL_CAPITAL - 1) * 100:.2f}%")
 
     def save_trades(self, filename: str):
@@ -530,7 +532,7 @@ class HyperScalperBacktester:
 if __name__ == "__main__":
     # 데이터 로드
     print("Loading data...")
-    df = pd.read_csv('historical_data/BTCUSDT_15m_raw.csv')
+    df = pd.read_csv(f'historical_data/{SYMBOL}_{TF}_raw.csv')
 
     # 컬럼명 소문자로 변환
     df.columns = df.columns.str.lower()
