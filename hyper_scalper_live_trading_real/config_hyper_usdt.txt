@@ -1,0 +1,46 @@
+# Hyper Scalper V2 Configuration (BTCUSDT)
+# 프로그램 실행 중에도 이 파일을 수정하면 자동 반영됩니다.
+# 주석(#)과 빈 줄은 무시됩니다.
+
+# ===========================================
+# 실행 모드
+# ===========================================
+# DRY_RUN=true: 실제 주문 없이 시뮬레이션 (CSV 기록만)
+# DRY_RUN=false: 실제 거래 모드
+DRY_RUN=false
+
+# ===========================================
+# 자본 설정
+INITIAL_CAPITAL=5364.0
+
+# 리스크 설정
+RISK_PER_TRADE=0.07
+MAX_LEVERAGE=90
+
+# 거래 방향: LONG, SHORT, BOTH
+TRADE_DIRECTION=BOTH
+
+# EMA 설정
+EMA_FAST=25
+EMA_MID=100
+EMA_SLOW=200
+
+# ADX 설정
+ADX_LENGTH=14
+ADX_THRESHOLD=30.0
+
+# Retest 설정
+RETEST_LOOKBACK=6
+
+# 손절 설정
+SL_LOOKBACK=29
+MAX_SL_DISTANCE=0.035
+
+# ATR 설정
+ATR_LENGTH=10
+TP_ATR_MULT_LONG=4.3
+TP_ATR_MULT_SHORT=4.3
+
+# 수수료
+MAKER_FEE=0.0002
+TAKER_FEE=0.0005
