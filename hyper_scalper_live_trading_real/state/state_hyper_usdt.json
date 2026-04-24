@@ -1,0 +1,15 @@
+{
+  "capital": 6126.506208909001,
+  "position": {
+    "direction": "SHORT",
+    "entry_price": 83000.9,
+    "entry_time": "2026-01-30T04:30:00.844504+00:00",
+    "entry_size": 0.206,
+    "take_profit": 80843.11422771057,
+    "stop_loss": 84699.9,
+    "leverage": 2.79,
+    "tp_order_id": "895081844958",
+    "sl_order_id": "3000000464376435"
+  },
+  "last_updated": "2026-01-30T04:30:01.026127+00:00"
+}

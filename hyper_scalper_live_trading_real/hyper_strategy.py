@@ -18,6 +18,7 @@ DRY_RUN 모드:
 import asyncio
 import logging
 import csv
+import math
 import os
 from datetime import datetime
 from typing import Optional, Dict, Any, List
@@ -219,12 +220,12 @@ class HyperScalperStrategy:
             self.logger.info(f"[DRY] 시뮬레이션 자본 설정: ${self.capital:.2f}")
             return
 
-        # LIVE 모드: 바이낸스 잔고에서 초기화
+        # LIVE 모드: 바이낸스 잔고에서 초기화 (90%만 사용)
         try:
             balance = await self.binance.get_account_balance(self.quote_asset)
             wallet_balance = balance['wallet_balance']
-            self.capital = wallet_balance
-            self.logger.info(f"초기 자본 설정 ({self.quote_asset}): ${self.capital:.2f}")
+            self.capital = wallet_balance * 0.90  # 90%만 사용
+            self.logger.info(f"초기 자본 설정 ({self.quote_asset}): ${self.capital:.2f} (잔고 ${wallet_balance:.2f}의 90%)")
         except Exception as e:
             self.logger.error(f"잔고 조회 실패: {e}")
             self.capital = self._get_param('INITIAL_CAPITAL', 1000.0)
@@ -555,7 +556,7 @@ class HyperScalperStrategy:
             order = await self.binance.open_market_position(
                 direction=direction,
                 quantity=entry_size,
-                leverage=int(leverage)
+                leverage=math.ceil(leverage)
             )
 
             if order is None:
@@ -765,18 +766,20 @@ class HyperScalperStrategy:
             # 차이 계산
             diff = actual_balance - self.capital
 
+            usable_balance = actual_balance * 0.90  # 90%만 사용
+
             if abs(diff) > 0.01:  # $0.01 이상 차이나면 로그
                 self.logger.warning(
                     f"[자본금 동기화] 로컬: ${self.capital:.2f} → "
-                    f"실제({self.quote_asset}): ${actual_balance:.2f} (차이: ${diff:.2f})"
+                    f"사용가능: ${usable_balance:.2f} (실제 잔고 ${actual_balance:.2f}의 90%)"
                 )
             else:
                 self.logger.info(
-                    f"[자본금 동기화] 실제 잔고 확인: ${actual_balance:.2f} ({self.quote_asset})"
+                    f"[자본금 동기화] 사용가능: ${usable_balance:.2f} (실제 잔고 ${actual_balance:.2f}의 90%)"
                 )
 
-            # 실제 잔고로 덮어쓰기
-            self.capital = actual_balance
+            # 실제 잔고의 90%로 덮어쓰기
+            self.capital = usable_balance
 
         except Exception as e:
             self.logger.error(f"자본금 동기화 실패: {e}")

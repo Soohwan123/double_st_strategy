@@ -30,7 +30,7 @@ from datetime import datetime
 # ============================================
 INITIAL_CAPITAL = 1000.0
 MAX_LEVERAGE = 90
-RISK_PER_TRADE = 0.07  # 5% 리스크
+RISK_PER_TRADE = 0.06  # 5% 리스크
 
 # 거래 방향: 'BOTH', 'LONG', 'SHORT'
 TRADE_DIRECTION = 'BOTH'
@@ -47,10 +47,10 @@ EMA_SLOW = 200
 
 # ADX 설정
 ADX_LENGTH = 14
-ADX_THRESHOLD = 30.0
+ADX_THRESHOLD = 32.0
 
 # Retest 설정
-RETEST_LOOKBACK = 5
+RETEST_LOOKBACK = 8
 
 # 손절 설정
 SL_LOOKBACK = 29  # 손절가 계산용 lookback 봉 수

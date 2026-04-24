@@ -1,0 +1,3 @@
+sheet	col	row	longname	input	keystrokes	comment	replayable
+			open-file	indicators_hyper.csv	o		True
+indicators_hyper			go-mouse		LeftClick	set cursor to row and column where mouse was clicked	True
