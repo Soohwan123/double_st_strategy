@@ -16,6 +16,9 @@ import pytz
 import websockets
 import websockets.exceptions
 from binance.client import Client
+import sys as _sys
+_sys.path.insert(0, '/home/double_st_strategy/price_feed')
+from ipc_client import IPCSubscriber
 
 from config import Config, DynamicConfig
 from binance_library import BinanceFuturesClient
@@ -109,12 +112,49 @@ class DailyRotatingLogger:
 
 
 # 전역 로그 핸들러
+# === WebSocket 끊김/재연결 Telegram 알림 (한번씩만 전송) ===
+_TG_TOKEN = "8585666858:AAG2nhq8IEDbjWxoQCLAcOpUjCwiSEdSFF4"
+_TG_CHAT_ID = "8084935783"
+
+def _send_telegram_alert(text: str):
+    """Fire-and-forget Telegram 알림 (blocking 방지)"""
+    import threading, urllib.request, urllib.parse, socket as _sk
+    host = _sk.gethostname()
+    msg = text + " | Host: " + host
+    def _send():
+        try:
+            url = "https://api.telegram.org/bot" + _TG_TOKEN + "/sendMessage"
+            data = urllib.parse.urlencode({"chat_id": _TG_CHAT_ID, "text": msg}).encode()
+            urllib.request.urlopen(url, data=data, timeout=5)
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
+
+
 log_handler = DailyRotatingLogger(Config.get_log_prefix(SYMBOL_TYPE), Config.LOGS_DIR)
 
 
 # =============================================================================
 # 웹소켓 핸들러
 # =============================================================================
+
+
+# =============================================================================
+# IPC Subscriber (price_feed 로부터 시세 수신) — websocket_handler 를 대체
+# =============================================================================
+
+async def ipc_subscriber_task(strategy):
+    """price_feed 의 ZMQ PUB 에서 BTCUSDC 시세 수신 → strategy 에 전달"""
+    subscriber = IPCSubscriber(
+        symbol="BTCUSDC",
+        on_kline_15m=strategy.on_candle_close,
+        on_kline_1h=None,
+        on_tick=strategy.on_tick,
+        logger=log_handler,
+        send_alert=_send_telegram_alert,
+    )
+    await subscriber.run()
+
 
 async def websocket_handler(strategy: HyperScalperStrategy):
     """
@@ -125,14 +165,20 @@ async def websocket_handler(strategy: HyperScalperStrategy):
     """
     logger = log_handler
     stream_url = Config.get_ws_stream_url_15m(SYMBOL_TYPE)
+    RECV_TIMEOUT = 90  # 90초 무수신 시 heartbeat 실패로 간주 → 강제 재연결 (aggTrade 시장 조용할때 1-2분 공백 가능)
+    ws_alerted_down = False  # Telegram 중복 알림 방지 (재연결 시 False 로 리셋)
+    backoff_delay = 5  # Reconnect 간격. 실패 시 exponential, 성공 시 리셋
 
     while True:
         try:
             async with websockets.connect(stream_url) as ws:
                 logger.info(f"웹소켓 연결: {SYMBOL} (15분봉)")
-
+                backoff_delay = 5  # 성공 연결 시 backoff 초기화
+                if ws_alerted_down:
+                    _send_telegram_alert("🟢 [" + SYMBOL_TYPE + "] WebSocket 재연결 복구")
+                    ws_alerted_down = False
                 while True:
-                    message = await ws.recv()
+                    message = await asyncio.wait_for(ws.recv(), timeout=RECV_TIMEOUT)
                     data = json.loads(message)
 
                     if 'data' not in data:
@@ -150,13 +196,29 @@ async def websocket_handler(strategy: HyperScalperStrategy):
                         price = float(stream_data['p'])
                         await strategy.on_tick(price)
 
+        except asyncio.TimeoutError:
+            logger.warning(f"웹소켓 {RECV_TIMEOUT}s 무수신 - heartbeat 실패, 강제 재연결")
+            if not ws_alerted_down:
+                _send_telegram_alert("🔴 [" + SYMBOL_TYPE + "] WebSocket heartbeat 실패 (90s 무수신)")
+                ws_alerted_down = True
+            await asyncio.sleep(backoff_delay)
+            backoff_delay = min(backoff_delay * 2, 300)  # 5→10→20→40→80→160→300 (max 5분)
+
         except websockets.exceptions.ConnectionClosed:
             logger.warning("웹소켓 연결 종료, 재연결 중...")
-            await asyncio.sleep(Config.WS_RECONNECT_DELAY)
+            if not ws_alerted_down:
+                _send_telegram_alert("🔴 [" + SYMBOL_TYPE + "] WebSocket 연결 종료")
+                ws_alerted_down = True
+            await asyncio.sleep(backoff_delay)
+            backoff_delay = min(backoff_delay * 2, 300)  # 5→10→20→40→80→160→300 (max 5분)
 
         except Exception as e:
             logger.error(f"웹소켓 에러: {e}")
-            await asyncio.sleep(Config.WS_RECONNECT_DELAY)
+            if not ws_alerted_down:
+                _send_telegram_alert("🔴 [" + SYMBOL_TYPE + "] WebSocket 에러: " + str(e))
+                ws_alerted_down = True
+            await asyncio.sleep(backoff_delay)
+            backoff_delay = min(backoff_delay * 2, 300)  # 5→10→20→40→80→160→300 (max 5분)
 
 
 # =============================================================================
@@ -174,25 +236,55 @@ async def position_sync_task(strategy: HyperScalperStrategy, interval: int = 30)
         try:
             await asyncio.sleep(interval)
 
+            # DRY 모드: binance 조회 불필요
+            if strategy.is_dry_run():
+                continue
+
             # 바이낸스 실제 포지션 확인
             pos_info = await strategy.binance.get_position_info()
 
             if strategy.position.has_position() and pos_info is None:
-                # 로컬에는 포지션 있는데 바이낸스에는 없음
-                logger.warning("예상치 못한 포지션 청산 감지!")
+                logger.warning("포지션 사라짐 감지! TP/SL 주문 상태 확인 중...")
 
-                # 마지막 거래 PnL 조회 시도
-                pnl_data = await strategy.binance.get_last_closed_trade_pnl()
+                exit_type = None
+                exit_price = None
 
-                if pnl_data and pnl_data['net_pnl'] != 0:
-                    net_pnl = pnl_data['net_pnl']
-                    old_capital = strategy.capital
-                    strategy.capital += net_pnl
-                    logger.warning(f"자본금 업데이트: ${old_capital:.2f} → ${strategy.capital:.2f} (PnL: ${net_pnl:.2f})")
+                if strategy.position.tp_order_id:
+                    try:
+                        tp_status = await strategy.binance.get_order_status(strategy.position.tp_order_id)
+                        if tp_status and tp_status.get('status') == 'FILLED':
+                            exit_type = 'TP'
+                            exit_price = strategy.position.take_profit
+                            logger.info(f"TP 주문 체결 확인: ID={strategy.position.tp_order_id}")
+                    except Exception as e:
+                        logger.warning(f"TP 주문 상태 조회 실패: {e}")
 
-                # 포지션 초기화
-                strategy.position.reset()
-                strategy._save_state()
+                if exit_type is None and strategy.position.sl_order_id:
+                    try:
+                        sl_status = await strategy.binance.get_order_status(strategy.position.sl_order_id)
+                        if sl_status and sl_status.get('status') == 'FILLED':
+                            exit_type = 'SL'
+                            exit_price = strategy.position.stop_loss
+                            logger.info(f"SL 주문 체결 확인: ID={strategy.position.sl_order_id}")
+                    except Exception as e:
+                        logger.warning(f"SL 주문 상태 조회 실패: {e}")
+
+                if exit_type == 'TP' and exit_price:
+                    await strategy.on_tp_filled(exit_price)
+                elif exit_type == 'SL' and exit_price:
+                    await strategy.on_sl_filled(exit_price)
+                else:
+                    logger.warning("TP/SL 주문 상태 확인 불가 — fallback PnL 조회")
+                    pnl_data = await strategy.binance.get_last_closed_trade_pnl()
+
+                    if pnl_data and pnl_data['net_pnl'] != 0:
+                        net_pnl = pnl_data['net_pnl']
+                        old_capital = strategy.capital
+                        strategy.capital += net_pnl
+                        logger.warning(f"자본금 업데이트: ${old_capital:.2f} → ${strategy.capital:.2f} (PnL: ${net_pnl:.2f})")
+
+                    strategy.position.reset()
+                    strategy._save_state()
 
         except Exception as e:
             logger.error(f"포지션 동기화 에러: {e}")
@@ -308,7 +400,7 @@ async def main():
 
     # 태스크 시작
     tasks = [
-        asyncio.create_task(websocket_handler(strategy)),
+        asyncio.create_task(ipc_subscriber_task(strategy)),
         asyncio.create_task(position_sync_task(strategy, interval=30)),
         asyncio.create_task(config_reload_task(strategy, interval=60)),
         asyncio.create_task(status_log_task(strategy, interval=300))

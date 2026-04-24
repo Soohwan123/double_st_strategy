@@ -1,3 +1,32 @@
-venv/
-*.csv
+# Python
+__pycache__/
 *.pyc
+*.pyo
+venv/
+
+# Secrets
+.env
+*.env
+
+# Runtime artifacts
+**/logs/*.log
+**/state/*.pid
+**/state/*.json
+**/trades/*.csv
+
+# Large data
+backtest/historical_data/
+backtest/backtest_data/
+backtest/data_with_*.csv
+backtest/fvg_winners/trades_bt_*.csv
+
+# OMC / Claude Code local
+.omc/
+.claude/
+
+# Archives
+*.tar.gz
+*.zip
+
+# System
+.DS_Store

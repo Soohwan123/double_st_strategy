@@ -20,6 +20,7 @@ import logging
 import csv
 import math
 import os
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import pytz
@@ -139,6 +140,10 @@ class HyperScalperStrategy:
 
         # 지표 기록 파일
         self.indicators_path = f"{Config.TRADES_DIR}/indicators_{symbol_type}.csv"
+
+        # on_tick API 호출 쓰로틀링 (초당 최대 10회)
+        self._last_tick_api_time: float = 0.0
+        self._tick_api_min_interval: float = 0.1  # 100ms
 
     # =========================================================================
     # 설정값 접근
@@ -470,7 +475,12 @@ class HyperScalperStrategy:
             익절가
         """
         taker_fee = self._get_param('TAKER_FEE', 0.000275)
-        fee_offset = entry_price * taker_fee * 2  # 수수료 보전
+        maker_fee = self._get_param('MAKER_FEE', 0.0)
+        fee_protection = self._get_param('FEE_PROTECTION', True)
+
+        fee_offset = 0
+        if fee_protection:
+            fee_offset = entry_price * (taker_fee * 2 + maker_fee)
 
         if direction == 'LONG':
             tp_mult = self._get_param('TP_ATR_MULT_LONG', 4.2)
@@ -590,9 +600,25 @@ class HyperScalperStrategy:
         self.position.leverage = leverage
 
         if not self.is_dry_run():
-            # LIVE 모드: TP/SL 주문 설정
-            await self._set_tp_order()
-            await self._set_sl_order()
+            # LIVE 모드: TP/SL 주문 설정 (재시도 포함)
+            tp_ok = await self._set_tp_order()
+            sl_ok = await self._set_sl_order()
+
+            if not tp_ok or not sl_ok:
+                self.logger.error(f"TP/SL 주문 설정 실패! TP={tp_ok}, SL={sl_ok}")
+                self.logger.error("포지션 보호 불가 - 시장가 긴급 청산 시도")
+                try:
+                    await self.binance.cancel_all_orders()
+                    await self.binance.close_position_market(
+                        direction=direction,
+                        quantity=actual_size
+                    )
+                    self.logger.warning("긴급 시장가 청산 완료")
+                    self.position.reset()
+                    self._save_state()
+                    return
+                except Exception as e:
+                    self.logger.error(f"긴급 청산도 실패! 수동 확인 필요: {e}")
         else:
             # DRY 모드: 가상 주문 ID 생성
             self.position.tp_order_id = f"DRY_TP_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -608,39 +634,79 @@ class HyperScalperStrategy:
 
         self.logger.info(f"{mode_prefix} {direction} 진입 완료!")
 
-    async def _set_tp_order(self):
-        """익절 지정가 주문 설정 (LIVE 모드 전용)"""
+    async def _set_tp_order(self, max_retries: int = 3) -> bool:
+        """
+        익절 지정가 주문 설정 (LIVE 모드 전용)
+        실패 시 재시도 (exponential backoff)
+
+        Returns:
+            성공 여부
+        """
         if self.is_dry_run() or not self.position.has_position():
-            return
+            return True
 
-        order = await self.binance.place_limit_close(
-            direction=self.position.direction,
-            price=self.position.take_profit,
-            quantity=self.position.entry_size,
-            retry_on_reduce_only=True
-        )
+        for attempt in range(max_retries):
+            try:
+                order = await self.binance.place_limit_close(
+                    direction=self.position.direction,
+                    price=self.position.take_profit,
+                    quantity=self.position.entry_size,
+                    retry_on_reduce_only=True
+                )
 
-        if order:
-            self.position.tp_order_id = str(order.get('orderId', ''))
-            self.logger.info(f"TP 주문 설정: ${self.position.take_profit:.2f}")
-        else:
-            self.logger.error("TP 주문 설정 실패")
+                if order:
+                    self.position.tp_order_id = str(order.get('orderId', ''))
+                    self.logger.info(f"TP 주문 설정: ${self.position.take_profit:.2f}")
+                    return True
+                else:
+                    self.logger.warning(f"TP 주문 설정 실패 (시도 {attempt + 1}/{max_retries})")
 
-    async def _set_sl_order(self):
-        """손절 스탑 마켓 주문 설정 (LIVE 모드 전용)"""
+            except Exception as e:
+                self.logger.warning(f"TP 주문 설정 예외 (시도 {attempt + 1}/{max_retries}): {e}")
+
+            if attempt < max_retries - 1:
+                delay = 2 ** attempt  # 1s, 2s
+                self.logger.info(f"TP 주문 재시도 대기: {delay}초")
+                await asyncio.sleep(delay)
+
+        self.logger.error(f"TP 주문 설정 최종 실패 ({max_retries}회 시도)")
+        return False
+
+    async def _set_sl_order(self, max_retries: int = 3) -> bool:
+        """
+        손절 스탑 마켓 주문 설정 (LIVE 모드 전용)
+        실패 시 재시도 (exponential backoff)
+
+        Returns:
+            성공 여부
+        """
         if self.is_dry_run() or not self.position.has_position():
-            return
+            return True
 
-        order = await self.binance.set_stop_loss(
-            direction=self.position.direction,
-            stop_price=self.position.stop_loss
-        )
+        for attempt in range(max_retries):
+            try:
+                order = await self.binance.set_stop_loss(
+                    direction=self.position.direction,
+                    stop_price=self.position.stop_loss
+                )
 
-        if order:
-            self.position.sl_order_id = str(order.get('orderId', order.get('algoId', '')))
-            self.logger.info(f"SL 주문 설정: ${self.position.stop_loss:.2f}")
-        else:
-            self.logger.error("SL 주문 설정 실패")
+                if order:
+                    self.position.sl_order_id = str(order.get('orderId', order.get('algoId', '')))
+                    self.logger.info(f"SL 주문 설정: ${self.position.stop_loss:.2f}")
+                    return True
+                else:
+                    self.logger.warning(f"SL 주문 설정 실패 (시도 {attempt + 1}/{max_retries})")
+
+            except Exception as e:
+                self.logger.warning(f"SL 주문 설정 예외 (시도 {attempt + 1}/{max_retries}): {e}")
+
+            if attempt < max_retries - 1:
+                delay = 2 ** attempt  # 1s, 2s
+                self.logger.info(f"SL 주문 재시도 대기: {delay}초")
+                await asyncio.sleep(delay)
+
+        self.logger.error(f"SL 주문 설정 최종 실패 ({max_retries}회 시도)")
+        return False
 
     # =========================================================================
     # 청산 로직
@@ -793,7 +859,7 @@ class HyperScalperStrategy:
         틱데이터 처리 - TP/SL 체결 감지
 
         DRY 모드: 가격만으로 TP/SL 터치 판단
-        LIVE 모드: 가격 터치 후 주문 상태 확인
+        LIVE 모드: 가격 터치 후 주문 상태 확인 (쓰로틀링 적용)
 
         Args:
             price: 현재 가격
@@ -818,7 +884,13 @@ class HyperScalperStrategy:
                 await self.on_tp_filled(tp_price)
                 return
             else:
-                # LIVE 모드: 주문 상태 확인
+                # LIVE 모드: API 쓰로틀링 (최대 10회/초)
+                now = time.monotonic()
+                if now - self._last_tick_api_time < self._tick_api_min_interval:
+                    return
+                self._last_tick_api_time = now
+
+                # 주문 상태 확인
                 if self.position.tp_order_id:
                     order_status = await self.binance.get_order_status(self.position.tp_order_id)
 
@@ -832,6 +904,7 @@ class HyperScalperStrategy:
                             executed_qty = float(order_status.get('executedQty', 0))
                             orig_qty = float(order_status.get('origQty', 0))
                             self.logger.info(f"TP 부분체결: {executed_qty}/{orig_qty}")
+                return  # TP 가격 도달 시 SL 체크 불필요
 
         # SL 체결 감지
         sl_reached = False
@@ -846,8 +919,17 @@ class HyperScalperStrategy:
                 await self.on_sl_filled(sl_price)
                 return
             else:
-                # LIVE 모드: 바이낸스 포지션 확인
-                pos_info = await self.binance.get_position_info()
+                # LIVE 모드: API 쓰로틀링 (최대 10회/초)
+                now = time.monotonic()
+                if now - self._last_tick_api_time < self._tick_api_min_interval:
+                    return
+                self._last_tick_api_time = now
+
+                # 바이낸스 포지션 확인
+                try:
+                    pos_info = await self.binance.get_position_info()
+                except Exception:
+                    return  # API 실패 시 다음 tick에서 재시도
 
                 if pos_info is None:
                     # 포지션 없음 = 이미 청산됨

@@ -139,7 +139,7 @@ class BinanceFuturesClient:
 
             return None
 
-        except BinanceAPIException as e:
+        except Exception as e:
             self.logger.error(f"포지션 정보 조회 실패: {e}")
             raise
 
@@ -445,6 +445,10 @@ class BinanceFuturesClient:
                     self.logger.error(f"지정가 청산 주문 실패: {e}")
                     return None
 
+            except Exception as e:
+                self.logger.error(f"지정가 청산 주문 예외: {e}")
+                return None
+
         self.logger.error(
             f"ReduceOnly 주문 실패: 최소 비율({min_ratio*100:.0f}%)까지 줄였으나 실패 "
             f"(시도 {attempt}회)"
@@ -504,6 +508,10 @@ class BinanceFuturesClient:
 
         except BinanceAPIException as e:
             self.logger.error(f"손절 주문 설정 실패: {e}")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"손절 주문 설정 예외: {e}")
             return None
 
     # =========================================================================
@@ -674,7 +682,7 @@ class BinanceFuturesClient:
                 symbol=self.symbol,
                 orderId=order_id
             )
-        except BinanceAPIException as e:
+        except Exception as e:
             self.logger.error(f"주문 조회 실패: {e}")
             return None
 
