@@ -1,0 +1,43 @@
+# OB Retest — ETHUSDT 5m bt_13 v11 MDD≤60 best (RPT 0.10, lev 5 cap)
+# 백테스트: backtest/ob_winners/ob_winners/bt_13_ETH_5m_swap_v11_mdd60.py
+# Spec    : backtest/ob_winners/ob_winners/_common_swap.py (entry-before-invalidation + 1m intrabar resolve, HTF on)
+# 결과 (lev 90): +16.6B% / MDD 57.3% / 4,263 trades / WR 89% / yearly 6/6 양수 / 25-26 +2.6K%
+# 결과 (lev 5 cap): **+1.1M% / MDD 50.2% / 4,263 trades / WR 89% / yearly 6/6 양수 / 25-26 +350.6%**
+#                  20-21 +258% / 21-22 +4.7K% / 22-23 +268% / 23-24 +45% / 24-25 +90.9% / 25-26 +350%
+# 계정    : fvg_strategy 와 동일 부계정 (.env.fvg). FVG 부계정 = lev 5 cap (VIP 0).
+# 자본 : $200 (FVG 부계정의 fvg_sol $200 과 별도, margin 경합 가능)
+
+# 실행 모드
+DRY_RUN=false
+
+# 자본
+INITIAL_CAPITAL=200.0
+
+# 메인 TF
+TF=5m
+
+# 전략 mode (LONG 우선, hysteresis 없음)
+STRATEGY_MODE=BT_LONG_FIRST
+
+# bt_13 v11 best 파라미터
+IMPULSE_LOOKBACK=12
+IMPULSE_MIN_PCT=0.01
+SL_BUFFER_PCT=0.003
+RR=0.25
+MAX_WAIT=50
+RISK_PER_TRADE=0.10
+MAX_LEVERAGE=5
+
+# HTF (bt_13 use_htf=True)
+USE_HTF=true
+HTF_EMA_LEN=200
+
+# 거래 방향
+TRADE_DIRECTION=BOTH
+
+# OB 큐
+MAX_OB_QUEUE=16
+
+# 수수료
+TAKER_FEE=0.0005
+MAKER_FEE=0.0002

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FVG Retest Live Trading — SOLUSDT 15m"""
+"""OB Retest Live Trading — SOLUSDT 5m bt_09 (hyper_v2 sub account)"""
 
 import asyncio
 import json
@@ -17,9 +17,9 @@ from ipc_client import IPCSubscriber
 
 from config import Config, DynamicConfig
 from binance_library import BinanceFuturesClient
-from fvg_strategy import FvgStrategy
+from ob_strategy import ObStrategy
 
-SYMBOL_TYPE = 'fvg_sol'
+SYMBOL_TYPE = 'ob_sol'
 SYMBOL = Config.get_symbol(SYMBOL_TYPE)
 
 
@@ -94,21 +94,21 @@ log_handler = DailyRotatingLogger(Config.get_log_prefix(SYMBOL_TYPE), Config.LOG
 async def ipc_subscriber_task(strategy):
     """price_feed 의 ZMQ PUB 에서 SOLUSDT 시세 수신 → strategy 에 전달.
 
-    bt_31 v3 swap (5m, no HTF): kline_5m + trade 만 구독, kline_1h 구독 X.
+    bt_09 OB swap (5m, HTF on): kline_5m + trade 만 구독, kline_1h 구독 X.
     """
     subscriber = IPCSubscriber(
         symbol="SOLUSDT",
         on_kline_main=strategy.on_candle_close,   # 5m kline
-        on_kline_1h=None,                          # HTF 사용 안 함
+        on_kline_1h=strategy.on_htf_kline,         # HTF 1h EMA200 (bt_09 use_htf=True)
         on_tick=strategy.on_tick,
-        kline_interval='5m',                       # bt_31 = 5m
+        kline_interval='5m',                       # bt_09 = 5m
         logger=log_handler,
         send_alert=_send_telegram_alert,
     )
     await subscriber.run()
 
 
-async def websocket_handler(strategy: FvgStrategy):
+async def websocket_handler(strategy: ObStrategy):
     logger = log_handler
     stream_url = Config.get_ws_stream_url_15m(SYMBOL_TYPE)
     RECV_TIMEOUT = 90  # 90초 무수신 시 heartbeat 실패로 간주 → 강제 재연결 (aggTrade 시장 조용할때 1-2분 공백 가능)
@@ -161,7 +161,7 @@ async def websocket_handler(strategy: FvgStrategy):
             backoff_delay = min(backoff_delay * 2, 300)  # 5→10→20→40→80→160→300 (max 5분)
 
 
-async def position_sync_task(strategy: FvgStrategy, interval: int = 30):
+async def position_sync_task(strategy: ObStrategy, interval: int = 30):
     logger = log_handler
     while True:
         try:
@@ -220,7 +220,7 @@ async def position_sync_task(strategy: FvgStrategy, interval: int = 30):
             logger.error(f"포지션 동기화 에러: {e}")
 
 
-async def config_reload_task(strategy: FvgStrategy, interval: int = 60):
+async def config_reload_task(strategy: ObStrategy, interval: int = 60):
     logger = log_handler
     while True:
         try:
@@ -231,7 +231,7 @@ async def config_reload_task(strategy: FvgStrategy, interval: int = 60):
             logger.error(f"설정 리로드 에러: {e}")
 
 
-async def status_log_task(strategy: FvgStrategy, interval: int = 300):
+async def status_log_task(strategy: ObStrategy, interval: int = 300):
     logger = log_handler
     while True:
         try:
@@ -279,7 +279,7 @@ async def main():
         qty_precision=Config.get_qty_precision(SYMBOL_TYPE)
     )
 
-    strategy = FvgStrategy(binance=binance, symbol_type=SYMBOL_TYPE, logger=logger)
+    strategy = ObStrategy(binance=binance, symbol_type=SYMBOL_TYPE, logger=logger)
     await strategy.initialize()
     await strategy.load_historical_data()
 

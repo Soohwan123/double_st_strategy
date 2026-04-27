@@ -11,7 +11,7 @@ DRY_RUN=false
 
 # ===========================================
 # 자본 설정
-INITIAL_CAPITAL=5900.0
+INITIAL_CAPITAL=10229.0
 
 # 리스크 설정
 RISK_PER_TRADE=0.07

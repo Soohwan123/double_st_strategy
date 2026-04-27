@@ -1,15 +1,39 @@
-# FVG Retest — SOLUSDT 15m (bt_25, v6_1 HTF, 1m entry-bar resolve)
+# FVG Retest — SOLUSDT 5m bt_31 v13_best (RPT 0.003 = 사실상 lev 1, 보수적)
+# 백테스트: backtest/fvg_winners/bt_31_SOL_5m_swap_v13_best.py
+# Spec    : backtest/fvg_winners/_common_swap.py v3 swap mode (no HTF, LONG-priority, single TP)
+# 결과    : 2020-09-14 ~ 2026-04-26 +40K% MDD 62% Trades 5,140 WR 42% (yearly 5/6 양수, 25-26 +713%)
+#          RPT=0.003 → 계산 lev=0.14 → MIN clamp 1.0 → 사실상 spot-style. max lev 1.67 (드물게 sl_dist 작은 봉)
+#          MAX_LEVERAGE=5 안전 캡 (실제로는 1.67 까지만 발동하므로 더 작아도 무방)
+
+# 실행 모드 — 첫 기동은 DRY 권장. 검증 후 false 로 전환.
 DRY_RUN=false
+
+# 자본
 INITIAL_CAPITAL=200.0
-RISK_PER_TRADE=0.03
+
+# 메인 TF (bt_31 = 5m)
+TF=5m
+
+# 전략 mode — BT _common_swap.py 와 1:1 매칭
+# BT_LONG_FIRST: LONG 우선 (양방향 valid 시 항상 LONG), 40/60 hysteresis 없음
+STRATEGY_MODE=BT_LONG_FIRST
+
+# bt_31 v13_best 파라미터
+SL_BUFFER_PCT=0.0205
+RR=1.59
+MAX_WAIT=17
+RISK_PER_TRADE=0.003
+MIN_FVG_PCT=0.002
+
+# HTF — v3 = 사용 안 함 (kline_1h 구독도 안 함)
+USE_HTF=false
+HTF_EMA_LEN=200
+
+# Risk / 거래
 MAX_LEVERAGE=5
 TRADE_DIRECTION=BOTH
-SL_BUFFER_PCT=0.003
-RR=1.2
-MAX_WAIT=10
-MIN_FVG_PCT=0.0
-USE_HTF=true
-HTF_EMA_LEN=200
 MAX_FVG_QUEUE=16
+
+# 수수료 (BT 와 동일)
 TAKER_FEE=0.0005
 MAKER_FEE=0.0002

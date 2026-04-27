@@ -1,0 +1,42 @@
+# OB Retest — SOLUSDT 5m bt_09 v5 MDD≤50 best
+# 백테스트: backtest/ob_winners/ob_winners/bt_09_SOL_5m_swap_v5_mdd50.py
+# Spec    : backtest/ob_winners/ob_winners/_common_swap.py (entry-before-invalidation + 1m intrabar resolve, HTF on)
+# 결과    : 2020-09-14 ~ 2026-04-23 +42M% MDD 42.5% Trades 1,296 WR 85.8% (yearly 6/6 양수)
+# 계정    : hyper_v2_sub_account 와 동일 부계정 (.env 같음). lev 90 까지 가능 — 백테스트 그대로 적용.
+#
+# 자본 배분: hyper_v2 capital -300, OB capital 200, 100 buffer (margin 경합 방지)
+
+# 실행 모드 — 첫 기동은 DRY 권장. 검증 후 false 로 전환.
+DRY_RUN=false
+
+# 자본
+INITIAL_CAPITAL=200.0
+
+# 메인 TF
+TF=5m
+
+# 전략 mode — BT _common_swap.py 와 1:1 매칭 (LONG 우선, hysteresis 없음)
+STRATEGY_MODE=BT_LONG_FIRST
+
+# bt_09 v5 best 파라미터
+IMPULSE_LOOKBACK=17
+IMPULSE_MIN_PCT=0.025
+SL_BUFFER_PCT=0.0025
+RR=0.35
+MAX_WAIT=550
+RISK_PER_TRADE=0.12
+MAX_LEVERAGE=90
+
+# HTF — bt_09 use_htf=True
+USE_HTF=true
+HTF_EMA_LEN=200
+
+# 거래 방향
+TRADE_DIRECTION=BOTH
+
+# OB 큐 크기 (BT 와 동일)
+MAX_OB_QUEUE=16
+
+# 수수료 (BT 와 동일)
+TAKER_FEE=0.0005
+MAKER_FEE=0.0002

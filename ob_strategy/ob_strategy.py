@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FVG Retest Live Strategy
+OB Retest Live Strategy
 _common.py run_backtest()와 동일한 매매 로직
 
 핵심 흐름:
@@ -21,17 +21,17 @@ from typing import Optional, Dict, Any, List, Tuple
 import pytz
 import pandas as pd
 
-from config import DynamicConfig, Config, FVG_DEFAULT_PARAMS
+from config import DynamicConfig, Config, OB_DEFAULT_PARAMS
 from state_manager import StateManager
 from binance_library import BinanceFuturesClient
-from data_handler import FvgCandleManager
+from data_handler import ObCandleManager
 
 
 # =========================================================================
 # FVG Queue
 # =========================================================================
 
-class FvgEntry:
+class ObEntry:
     """단일 FVG 엔트리"""
     __slots__ = ('top', 'bot', 'bar_idx')
 
@@ -41,16 +41,16 @@ class FvgEntry:
         self.bar_idx = bar_idx
 
 
-class FvgQueue:
+class ObQueue:
     """FVG 큐 관리 (백테스트의 long_top/bot/bar, short_top/bot/bar와 동일)"""
 
     def __init__(self, max_size: int = 16):
         self.max_size = max_size
-        self.entries: List[FvgEntry] = []
+        self.entries: List[ObEntry] = []
 
     def add(self, top: float, bot: float, bar_idx: int):
         if len(self.entries) < self.max_size:
-            self.entries.append(FvgEntry(top, bot, bar_idx))
+            self.entries.append(ObEntry(top, bot, bar_idx))
 
     def invalidate_long(self, close: float):
         """Bullish FVG: close < bot → 무효 (백테스트 line 318)"""
@@ -64,13 +64,13 @@ class FvgQueue:
         """max_wait 초과 FVG 제거 (백테스트 line 318, 324)"""
         self.entries = [e for e in self.entries if (current_idx - e.bar_idx) <= max_wait]
 
-    def get_newest(self) -> Optional[FvgEntry]:
+    def get_newest(self) -> Optional[ObEntry]:
         """가장 최근 FVG 반환 (백테스트 line 347: best_bar > best_bar)"""
         if not self.entries:
             return None
         return max(self.entries, key=lambda e: e.bar_idx)
 
-    def get_newest_before(self, current_bar_idx: int) -> Optional[FvgEntry]:
+    def get_newest_before(self, current_bar_idx: int) -> Optional[ObEntry]:
         """current_bar_idx보다 이전 봉의 FVG 중 가장 최근 것.
         백테스트 `long_bar[k] < i` 조건과 동일. 이번 봉에 방금 감지된 FVG는 스킵."""
         candidates = [e for e in self.entries if e.bar_idx < current_bar_idx]
@@ -89,7 +89,7 @@ class FvgQueue:
 # Position State
 # =========================================================================
 
-class FvgPositionState:
+class ObPositionState:
     def __init__(self):
         self.reset()
 
@@ -174,7 +174,7 @@ class FvgPositionState:
 # Strategy
 # =========================================================================
 
-class FvgStrategy:
+class ObStrategy:
     def __init__(self, binance: BinanceFuturesClient, symbol_type: str, logger: logging.Logger):
         self.binance = binance
         self.symbol_type = symbol_type
@@ -183,12 +183,12 @@ class FvgStrategy:
         self.quote_asset = Config.get_quote_asset(symbol_type)
         self.dynamic_config = DynamicConfig(symbol_type)
         self.state_manager = StateManager(Config.get_state_path(symbol_type), logger)
-        self.position = FvgPositionState()
+        self.position = ObPositionState()
 
-        self.candle_manager: Optional[FvgCandleManager] = None
-        max_q = self._get_param('MAX_FVG_QUEUE', 16)
-        self.long_queue = FvgQueue(max_size=max_q)
-        self.short_queue = FvgQueue(max_size=max_q)
+        self.candle_manager: Optional[ObCandleManager] = None
+        max_q = self._get_param('MAX_OB_QUEUE', 16)
+        self.long_queue = ObQueue(max_size=max_q)
+        self.short_queue = ObQueue(max_size=max_q)
         self.capital: float = 0.0
         self.initialized: bool = False
         self._bar_idx: int = 0
@@ -199,7 +199,7 @@ class FvgStrategy:
         # TF: '15m' (default) or '5m' — load_historical_data 의 interval 과 log prefix 에 사용
         # STRATEGY_MODE: 'HYSTERESIS' (default, 40/60 line, BTC/ETH/XRP)
         #                'BT_LONG_FIRST' (LONG-priority, BT _common_swap.py 와 1:1 매칭, SOL bt_31)
-        self.tf = str(self.dynamic_config.get('TF') or '15m')
+        self.tf = str(self.dynamic_config.get('TF') or '5m')
         self.strategy_mode = str(self.dynamic_config.get('STRATEGY_MODE') or 'HYSTERESIS')
 
         self.trades_path = Config.get_trades_path(symbol_type)
@@ -220,7 +220,7 @@ class FvgStrategy:
         self.dynamic_config.reload()
 
     def _get_param(self, key: str, default=None):
-        return self.dynamic_config.get(key, FVG_DEFAULT_PARAMS.get(key, default))
+        return self.dynamic_config.get(key, OB_DEFAULT_PARAMS.get(key, default))
 
     def is_dry_run(self) -> bool:
         return self._get_param('DRY_RUN', True)
@@ -231,7 +231,7 @@ class FvgStrategy:
 
     async def initialize(self):
         self.logger.info("=" * 60)
-        self.logger.info("FVG Retest Strategy 초기화")
+        self.logger.info("OB Retest Strategy 초기화")
         self._reload_config()
 
         if self.is_dry_run():
@@ -241,7 +241,7 @@ class FvgStrategy:
             self.logger.warning("*** 실제 자금으로 거래합니다! ***")
         self.logger.info("=" * 60)
 
-        self.candle_manager = FvgCandleManager(
+        self.candle_manager = ObCandleManager(
             max_candles=500,
             htf_ema_len=self._get_param('HTF_EMA_LEN', 200),
             use_htf=self._get_param('USE_HTF', True),
@@ -431,14 +431,15 @@ class FvgStrategy:
         timestamps = df['timestamp']
         n = len(df)
 
-        max_wait = self._get_param('MAX_WAIT', 20)
-        min_fvg_pct = self._get_param('MIN_FVG_PCT', 0.0)
+        max_wait = self._get_param('MAX_WAIT', 550)
+        impulse_lookback = self._get_param('IMPULSE_LOOKBACK', 17)
+        impulse_min_pct = self._get_param('IMPULSE_MIN_PCT', 0.025)
         trade_dir = self._get_param('TRADE_DIRECTION', 'BOTH')
-        sl_buffer = self._get_param('SL_BUFFER_PCT', 0.005)
-        rr = self._get_param('RR', 1.5)
+        sl_buffer = self._get_param('SL_BUFFER_PCT', 0.0025)
+        rr = self._get_param('RR', 0.35)
         taker_fee = self._get_param('TAKER_FEE', 0.0005)
         max_lev = self._get_param('MAX_LEVERAGE', 90)
-        risk_per_trade = self._get_param('RISK_PER_TRADE', 0.02)
+        risk_per_trade = self._get_param('RISK_PER_TRADE', 0.12)
         use_htf = self._get_param('USE_HTF', True)
         htf_len = self._get_param('HTF_EMA_LEN', 200)
 
@@ -470,7 +471,7 @@ class FvgStrategy:
         # 가상 포지션 상태
         v_pos = None
 
-        for i in range(2, n):
+        for i in range(impulse_lookback + 1, n):
             # 1. EXIT (가상 포지션) — 백테스트 `continue` 매칭: exit 발생 시 이 봉의 나머지 처리 스킵
             if v_pos is not None and i > v_pos['entry_idx']:
                 exited = False
@@ -489,30 +490,39 @@ class FvgStrategy:
                 if exited:
                     continue
 
-            # 2. FVG 감지 (포지션 유무 무관, 백테스트 line 298-313)
-            if l[i] > h[i - 2]:
-                gap_top = float(l[i])
-                gap_bot = float(h[i - 2])
-                if c[i] > 0 and (gap_top - gap_bot) / c[i] >= min_fvg_pct:
-                    self.long_queue.add(gap_top, gap_bot, i)
-            if h[i] < l[i - 2]:
-                gap_top = float(l[i - 2])
-                gap_bot = float(h[i])
-                if c[i] > 0 and (gap_top - gap_bot) / c[i] >= min_fvg_pct:
-                    self.short_queue.add(gap_top, gap_bot, i)
+            # 2. OB 감지 (백테스트 _common_swap.py 와 동일: impulse + lookback)
+            if c[i] > 0:
+                impulse_up = (c[i] - c[i - impulse_lookback]) / c[i]
+                if impulse_up >= impulse_min_pct:
+                    ob_idx = i - impulse_lookback
+                    min_l = l[ob_idx]
+                    for k in range(i - impulse_lookback + 1, i):
+                        if l[k] < min_l:
+                            min_l = l[k]
+                            ob_idx = k
+                    ob_top = float(h[ob_idx])
+                    ob_bot = float(l[ob_idx])
+                    if ob_top > ob_bot:
+                        self.long_queue.add(ob_top, ob_bot, i)
+                impulse_down = (c[i - impulse_lookback] - c[i]) / c[i]
+                if impulse_down >= impulse_min_pct:
+                    ob_idx = i - impulse_lookback
+                    max_h = h[ob_idx]
+                    for k in range(i - impulse_lookback + 1, i):
+                        if h[k] > max_h:
+                            max_h = h[k]
+                            ob_idx = k
+                    ob_top = float(h[ob_idx])
+                    ob_bot = float(l[ob_idx])
+                    if ob_top > ob_bot:
+                        self.short_queue.add(ob_top, ob_bot, i)
 
-            # 3. Invalidation + Timeout
-            close_v = float(c[i])
-            self.long_queue.invalidate_long(close_v)
-            self.short_queue.invalidate_short(close_v)
-            self.long_queue.timeout(i, max_wait)
-            self.short_queue.timeout(i, max_wait)
-
-            # 4. Virtual entry (포지션 없을 때만, LONG 우선)
+            # 3. [SWAP] Virtual entry — invalidation 보다 먼저 (BT _common_swap.py:213-307 매칭)
+            #    LIMIT 진입 + close-기반 무효화 함정 회피: 같은 봉에서 fill 먼저, 무효화 나중.
             if v_pos is None:
                 htf = htf_per_bar[i]
 
-                # LONG 시도 (백테스트 line 341-386)
+                # LONG 시도 (BT line 218-262)
                 if trade_dir in ['BOTH', 'LONG'] and htf['bull']:
                     best_k = -1
                     best_bar = -1
@@ -544,7 +554,7 @@ class FvgStrategy:
                             self.long_queue.clear()
                             continue
 
-                # SHORT 시도 (백테스트 line 389-433)
+                # SHORT 시도 (BT line 264-307)
                 if trade_dir in ['BOTH', 'SHORT'] and htf['bear']:
                     best_k = -1
                     best_bar = -1
@@ -575,6 +585,13 @@ class FvgStrategy:
                             }
                             self.short_queue.clear()
                             continue
+
+            # 4. [SWAP] Invalidation + Timeout — entry 뒤로 (BT _common_swap.py:309-319 매칭)
+            close_v = float(c[i])
+            self.long_queue.invalidate_long(close_v)
+            self.short_queue.invalidate_short(close_v)
+            self.long_queue.timeout(i, max_wait)
+            self.short_queue.timeout(i, max_wait)
 
         self._bar_idx = n
 
@@ -624,7 +641,7 @@ class FvgStrategy:
     # 레버리지/가격 계산 (백테스트 line 358-380과 동일)
     # =====================================================================
 
-    def _calculate_entry(self, fvg: FvgEntry, direction: str) -> Dict[str, float]:
+    def _calculate_entry(self, fvg: ObEntry, direction: str) -> Dict[str, float]:
         """FVG 기반 진입 계산. 백테스트 execute_entry와 동일."""
         taker_fee = self._get_param('TAKER_FEE', 0.0005)
         max_lev = self._get_param('MAX_LEVERAGE', 90)
@@ -710,17 +727,18 @@ class FvgStrategy:
             self._save_state()
             return
 
-        # 2. FVG 감지 (백테스트 line 298-313: 포지션 유무와 무관하게 항상)
-        min_fvg_pct = self._get_param('MIN_FVG_PCT', 0.0)
-        fvgs = self.candle_manager.detect_fvg(min_fvg_pct)
-        if fvgs:
-            for fvg in fvgs:
-                if fvg['type'] == 'LONG':
-                    self.long_queue.add(fvg['top'], fvg['bot'], self._bar_idx)
-                    self.logger.info(f"  [FVG] LONG 감지: top={fvg['top']:.{pp}f}, bot={fvg['bot']:.{pp}f}")
+        # 2. OB 감지 (백테스트 _common_swap.py 와 동일: impulse 패턴 + lookback 윈도우 lowest/highest)
+        impulse_lookback = self._get_param('IMPULSE_LOOKBACK', 17)
+        impulse_min_pct = self._get_param('IMPULSE_MIN_PCT', 0.025)
+        obs = self.candle_manager.detect_ob(impulse_lookback, impulse_min_pct)
+        if obs:
+            for ob in obs:
+                if ob['type'] == 'LONG':
+                    self.long_queue.add(ob['top'], ob['bot'], self._bar_idx)
+                    self.logger.info(f"  [OB] LONG 감지: top={ob['top']:.{pp}f}, bot={ob['bot']:.{pp}f}")
                 else:
-                    self.short_queue.add(fvg['top'], fvg['bot'], self._bar_idx)
-                    self.logger.info(f"  [FVG] SHORT 감지: top={fvg['top']:.{pp}f}, bot={fvg['bot']:.{pp}f}")
+                    self.short_queue.add(ob['top'], ob['bot'], self._bar_idx)
+                    self.logger.info(f"  [OB] SHORT 감지: top={ob['top']:.{pp}f}, bot={ob['bot']:.{pp}f}")
 
         # 3. Invalidation + Timeout (백테스트 line 316-327)
         max_wait = self._get_param('MAX_WAIT', 20)
