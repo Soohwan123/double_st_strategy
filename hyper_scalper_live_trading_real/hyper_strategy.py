@@ -49,6 +49,9 @@ class HyperPositionState:
         self.leverage: float = 1.0
         self.tp_order_id: Optional[str] = None
         self.sl_order_id: Optional[str] = None
+        # Actual PnL 조회용 (get_actual_trade_pnl 의 인자)
+        self.entry_order_id: Optional[int] = None
+        self.entry_time_ms: int = 0
 
     def has_position(self) -> bool:
         """포지션 존재 여부"""
@@ -65,7 +68,9 @@ class HyperPositionState:
             'stop_loss': self.stop_loss,
             'leverage': self.leverage,
             'tp_order_id': self.tp_order_id,
-            'sl_order_id': self.sl_order_id
+            'sl_order_id': self.sl_order_id,
+            'entry_order_id': self.entry_order_id,
+            'entry_time_ms': self.entry_time_ms,
         }
 
     def from_dict(self, data: Dict[str, Any]):
@@ -80,6 +85,8 @@ class HyperPositionState:
         self.leverage = data.get('leverage', 1.0)
         self.tp_order_id = data.get('tp_order_id')
         self.sl_order_id = data.get('sl_order_id')
+        self.entry_order_id = data.get('entry_order_id')
+        self.entry_time_ms = data.get('entry_time_ms', 0)
 
 
 class HyperScalperStrategy:
@@ -560,6 +567,8 @@ class HyperScalperStrategy:
 
         actual_entry_price = entry_price
         actual_size = entry_size
+        entry_order_id = None
+        entry_time_ms = 0
 
         if not self.is_dry_run():
             # ========== LIVE 모드: 실제 주문 ==========
@@ -572,6 +581,10 @@ class HyperScalperStrategy:
             if order is None:
                 self.logger.error("시장가 진입 실패")
                 return
+
+            # entry_order_id / entry_time_ms 저장 (actual PnL 조회용)
+            entry_order_id = order.get('orderId')
+            entry_time_ms = order.get('updateTime', int(time.time() * 1000))
 
             # 실제 체결 정보 조회
             await asyncio.sleep(0.5)
@@ -598,6 +611,8 @@ class HyperScalperStrategy:
         self.position.take_profit = take_profit
         self.position.stop_loss = stop_loss
         self.position.leverage = leverage
+        self.position.entry_order_id = entry_order_id
+        self.position.entry_time_ms = entry_time_ms
 
         if not self.is_dry_run():
             # LIVE 모드: TP/SL 주문 설정 (재시도 포함)

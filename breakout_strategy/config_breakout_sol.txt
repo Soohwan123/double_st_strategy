@@ -1,0 +1,33 @@
+# Breakout — SOLUSDT 5m bt_02 v4 best
+# 백테스트: backtest/breakout_winners/bt_02_SOL_5m_v4_best.py
+# Spec    : backtest/breakout_winners/_common.py (LuxAlgo Trendlines with Breaks, fixed SL/TP)
+# 결과 (lev 90, 6년) : +366,673% / MDD 69.2% / 1,040 trades / WR 57.3% / 6/6 yearly 양수
+# 결과 (lev 5 cap)   : +222,746% / MDD 65.1% / 동일 trades / WR 동일 (lev>5 비율 45.6%)
+# 계정 : Hyper 부계정 (.env, hyper_v2/eth_hyper 와 공유). lev 90 사용 가능.
+# 자본 : $200 (테스트, 추후 $1000 으로 확대 예정). hyper_v2 -$200, eth_hyper -$200 합쳐서 $400 분배 중 절반.
+#
+# 레버리지 분포 (BT 실측): median 4.79x, mean 5.04x, max 13.61x. lev 90 cap 도달 0건.
+
+# 실행 모드
+DRY_RUN=false
+
+# 자본
+INITIAL_CAPITAL=200.0
+
+# 메인 TF
+TF=5m
+
+# bt_02 v4 best 파라미터
+LENGTH=180
+MULT=0.47
+SL_ATR_MULT=4.2
+RR=1.1
+RISK_PER_TRADE=0.08
+MAX_LEVERAGE=90
+
+# 거래 방향
+TRADE_DIRECTION=BOTH
+
+# 수수료
+TAKER_FEE=0.0005
+MAKER_FEE=0.0002

@@ -258,8 +258,11 @@ class CandleDataManager:
         else:
             # 새 봉 시작 (FIFO: _append_candle에서 max_candles 초과 시 자동 제거)
             self._append_candle(candle)
-            # 새 봉은 아직 진행 중이므로 지표 계산하지 않음
-            # (봉 마감 시에만 증분 계산)
+            # price_feed REST polling 은 closed 봉만 publish (x=True 로 새 timestamp 도착)
+            # → is_closed 면 즉시 증분 지표 계산 (WS tick streaming 분기 미사용 대비)
+            if is_closed:
+                self._update_indicators_incremental()
+                self._save_prev_ema_values()
 
         return is_closed
 

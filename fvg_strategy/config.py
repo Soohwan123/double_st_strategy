@@ -67,30 +67,18 @@ class Config:
     USE_TESTNET = os.getenv('USE_TESTNET', 'False').lower() == 'true'
 
     SYMBOLS = {
-        'fvg_btc': 'BTCUSDT',
-        'fvg_eth': 'ETHUSDT',
-        'fvg_xrp': 'XRPUSDT',
         'fvg_sol': 'SOLUSDT'
     }
 
     PRICE_PRECISION = {
-        'fvg_btc': 1,
-        'fvg_eth': 2,
-        'fvg_xrp': 4,
         'fvg_sol': 2
     }
 
     QTY_PRECISION = {
-        'fvg_btc': 3,
-        'fvg_eth': 3,
-        'fvg_xrp': 1,
         'fvg_sol': 0
     }
 
     QUOTE_ASSET = {
-        'fvg_btc': 'USDT',
-        'fvg_eth': 'USDT',
-        'fvg_xrp': 'USDT',
         'fvg_sol': 'USDT'
     }
 

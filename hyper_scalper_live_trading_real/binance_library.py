@@ -818,6 +818,49 @@ class BinanceFuturesClient:
             self.logger.error(f"마지막 청산 PnL 조회 실패: {e}")
             return {'realized_pnl': 0.0, 'commission': 0.0, 'net_pnl': 0.0}
 
+    async def get_actual_trade_pnl(self, entry_order_id: int, entry_time_ms: int) -> Optional[Dict[str, float]]:
+        """
+        실제 체결 내역으로 정확한 PnL 계산 (entry fee + 모든 close fill 합산).
+
+        Args:
+            entry_order_id: 진입 주문 ID
+            entry_time_ms: 진입 시간 (ms timestamp)
+
+        Returns:
+            {'realized_pnl', 'entry_commission', 'exit_commission', 'net_pnl'} or None
+        """
+        try:
+            await asyncio.sleep(1.0)
+
+            entry_trades = self.client.futures_account_trades(
+                symbol=self.symbol, orderId=int(entry_order_id)
+            )
+            entry_commission = sum(float(t.get('commission', 0)) for t in entry_trades)
+
+            all_trades = self.client.futures_account_trades(
+                symbol=self.symbol, startTime=entry_time_ms, limit=100
+            )
+            exit_trades = [t for t in all_trades if float(t.get('realizedPnl', 0)) != 0]
+
+            if not exit_trades:
+                self.logger.warning("청산 체결 내역 없음")
+                return None
+
+            total_rpnl = sum(float(t.get('realizedPnl', 0)) for t in exit_trades)
+            exit_commission = sum(float(t.get('commission', 0)) for t in exit_trades)
+            net_pnl = total_rpnl - entry_commission - exit_commission
+
+            return {
+                'realized_pnl': total_rpnl,
+                'entry_commission': entry_commission,
+                'exit_commission': exit_commission,
+                'net_pnl': net_pnl
+            }
+
+        except Exception as e:
+            self.logger.error(f"실제 PnL 조회 실패: {e}")
+            return None
+
     async def get_order_pnl(self, order_id) -> Dict[str, float]:
         """
         특정 주문번호의 PnL 조회

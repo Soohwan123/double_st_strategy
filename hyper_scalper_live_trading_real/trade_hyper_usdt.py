@@ -274,15 +274,26 @@ async def position_sync_task(strategy: HyperScalperStrategy, interval: int = 30)
                 elif exit_type == 'SL' and exit_price:
                     await strategy.on_sl_filled(exit_price)
                 else:
-                    logger.warning("TP/SL 주문 상태 확인 불가 — fallback PnL 조회")
-                    pnl_data = await strategy.binance.get_last_closed_trade_pnl()
-
-                    if pnl_data and pnl_data['net_pnl'] != 0:
+                    # fallback — actual PnL (entry_order_id + startTime, BTCUSDT 만)
+                    logger.warning("TP/SL 주문 상태 확인 불가 — actual PnL 조회")
+                    pnl_data = None
+                    if strategy.position.entry_order_id and strategy.position.entry_time_ms:
+                        pnl_data = await strategy.binance.get_actual_trade_pnl(
+                            entry_order_id=strategy.position.entry_order_id,
+                            entry_time_ms=strategy.position.entry_time_ms,
+                        )
+                    if pnl_data and pnl_data.get('net_pnl', 0) != 0:
                         net_pnl = pnl_data['net_pnl']
                         old_capital = strategy.capital
                         strategy.capital += net_pnl
-                        logger.warning(f"자본금 업데이트: ${old_capital:.2f} → ${strategy.capital:.2f} (PnL: ${net_pnl:.2f})")
-
+                        logger.warning(
+                            f"[actual PnL] rpnl=${pnl_data['realized_pnl']:.2f} "
+                            f"ent_fee=${pnl_data['entry_commission']:.2f} "
+                            f"ext_fee=${pnl_data['exit_commission']:.2f} → net=${net_pnl:.2f}"
+                        )
+                        logger.warning(f"자본금 업데이트: ${old_capital:.2f} → ${strategy.capital:.2f}")
+                    else:
+                        logger.error(f"actual PnL 조회 실패 — 자본금 update 안 함 (entry_order_id={strategy.position.entry_order_id}, entry_time_ms={strategy.position.entry_time_ms})")
                     strategy.position.reset()
                     strategy._save_state()
 

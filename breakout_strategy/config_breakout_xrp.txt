@@ -1,0 +1,33 @@
+# Breakout — XRPUSDT 5m bt_03 v4 best
+# 백테스트: backtest/breakout_winners/bt_03_XRP_5m_v4_best.py
+# Spec    : backtest/breakout_winners/_common.py (LuxAlgo Trendlines with Breaks, fixed SL/TP)
+# 결과 (lev 90, 6년) : +135,000% / MDD 66.8% / 1,186 trades / WR 40.3% / 6/6 yearly 양수
+# 결과 (lev 5 cap)   : +107,494% / MDD 67.4% / 동일 trades (lev>5 비율 6.3%)
+# 계정 : Hyper 부계정 (.env, hyper_v2/eth_hyper 와 공유). lev 90 사용 가능.
+# 자본 : $200 (테스트, 추후 $1000 으로 확대 예정).
+#
+# 레버리지 분포 (BT 실측): median 2.86x, mean 2.99x, max 7.65x. lev cap 영향 작음.
+
+# 실행 모드
+DRY_RUN=false
+
+# 자본
+INITIAL_CAPITAL=200.0
+
+# 메인 TF
+TF=5m
+
+# bt_03 v4 best 파라미터
+LENGTH=150
+MULT=1.1
+SL_ATR_MULT=7.0
+RR=2.0
+RISK_PER_TRADE=0.06
+MAX_LEVERAGE=90
+
+# 거래 방향
+TRADE_DIRECTION=BOTH
+
+# 수수료
+TAKER_FEE=0.0005
+MAKER_FEE=0.0002

@@ -158,6 +158,11 @@ class CandleDataManager:
                 self._save_prev_ema_values()
         else:
             self._append_candle(candle)
+            # price_feed REST polling 은 closed 봉만 publish (x=True 로 새 timestamp 도착)
+            # → is_closed 면 즉시 증분 지표 계산
+            if is_closed:
+                self._update_indicators_incremental()
+                self._save_prev_ema_values()
 
         return is_closed
 

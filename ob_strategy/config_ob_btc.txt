@@ -1,0 +1,46 @@
+# OB Retest — BTCUSDT 5m bt_01 v17 nano final winner
+# 백테스트: backtest/ob_winners/ob_winners/bt_01_BTC_5m_swap_v17_final.py
+# Spec    : backtest/ob_winners/ob_winners/_common_swap.py
+#           (entry-before-invalidation + 1m intrabar resolve, 진입봉 TP 무시, LIQ>SL>ENTRY>TP, HTF on)
+# 결과 (FULL 2020-2026): +39,232% / MDD 69.6% / 1,269 trades / WR 66.4% / LIQ 0 / 6/6 yearly 양수
+# Yearly:
+#   20-21 +293.5% / 21-22 +175.9% / 22-23 +49.8% / 23-24 +61.6% / 24-25 +266.5% / 25-26 +37.7%
+# 레버리지 (BT 실측):
+#   median 2.53x, mean 2.44x, max 7.10x — MAX_LEV=90 cap 도달 0건. lev 5 cap 영향 0.3%
+# 계정    : FVG 부계정 (.env). fvg_sol 와 wallet 공유. lev 5 cap 적용.
+# 자본    : $200 (fvg_sol $200 와 별도)
+
+# 실행 모드
+DRY_RUN=false
+
+# 자본
+INITIAL_CAPITAL=1000.0
+
+# 메인 TF
+TF=5m
+
+# 전략 mode (LONG 우선, BT _common_swap.py 와 매칭)
+STRATEGY_MODE=BT_LONG_FIRST
+
+# bt_01 v17 final 파라미터
+IMPULSE_LOOKBACK=38
+IMPULSE_MIN_PCT=0.010
+SL_BUFFER_PCT=0.0278
+RR=0.655
+MAX_WAIT=50
+RISK_PER_TRADE=0.083
+MAX_LEVERAGE=5
+
+# HTF (bt_01 use_htf=True)
+USE_HTF=true
+HTF_EMA_LEN=200
+
+# 거래 방향
+TRADE_DIRECTION=BOTH
+
+# OB 큐
+MAX_OB_QUEUE=16
+
+# 수수료
+TAKER_FEE=0.0005
+MAKER_FEE=0.0002
